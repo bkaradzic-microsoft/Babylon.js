@@ -105,6 +105,9 @@ export interface INativeEngine {
     submitCommands(): void;
 
     populateFrameStats(stats: NativeFrameStats): void;
+
+    beginFrame(): void;
+    endFrame(): void;
 }
 
 /** @internal */

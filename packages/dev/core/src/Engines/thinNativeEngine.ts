@@ -2592,7 +2592,7 @@ export class ThinNativeEngine extends ThinEngine {
         );
     }
 
-    override startTimeQuery(): Nullable<_TimeToken> {
+    public override startTimeQuery(): Nullable<_TimeToken> {
         if (!this._gpuFrameTimeToken) {
             this._gpuFrameTimeToken = new _TimeToken();
         }
@@ -2601,8 +2601,24 @@ export class ThinNativeEngine extends ThinEngine {
         return this._gpuFrameTimeToken;
     }
 
-    override endTimeQuery(token: _TimeToken): int {
+    public override endTimeQuery(token: _TimeToken): int {
         this._engine.populateFrameStats(this._frameStats);
         return this._frameStats.gpuTimeNs;
+    }
+
+    public override beginFrame(): void {
+        super.beginFrame();
+
+        if (this._engine.beginFrame) {
+            this._engine.beginFrame();
+        }
+    }
+
+    public override endFrame(): void {
+        if (this._engine.endFrame) {
+            this._engine.endFrame();
+        }
+
+        super.endFrame();
     }
 }
