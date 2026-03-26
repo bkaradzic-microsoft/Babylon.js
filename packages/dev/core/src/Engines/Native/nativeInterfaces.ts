@@ -353,6 +353,7 @@ interface INativeEngineConstructor {
     readonly COMMAND_SETVIEWPORT: NativeData;
     readonly COMMAND_SETSCISSOR: NativeData;
     readonly COMMAND_COPYTEXTURE: NativeData;
+    readonly COMMAND_READTEXTURE: NativeData;
 }
 
 /** @internal */
