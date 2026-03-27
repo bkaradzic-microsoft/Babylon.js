@@ -760,11 +760,15 @@ export class AdvancedDynamicTexture extends DynamicTexture {
             }
             if (!this._alreadyRegisteredForRender) {
                 this._alreadyRegisteredForRender = true;
-                Tools.SetImmediate(() => {
-                    // We want to force an update so the texture can be set as ready
-                    this.update(this.applyYInversionOnUpdate, this.premulAlpha, AdvancedDynamicTexture.AllowGPUOptimizations);
-                    this._alreadyRegisteredForRender = false;
-                });
+                const scene = this.getScene();
+                if (scene) {
+                    scene.onBeforeRenderObservable.addOnce(() => {
+                        // Force an update so the texture can be set as ready.
+                        // Runs inside scene.render() to ensure encoder is active.
+                        this.update(this.applyYInversionOnUpdate, this.premulAlpha, AdvancedDynamicTexture.AllowGPUOptimizations);
+                        this._alreadyRegisteredForRender = false;
+                    });
+                }
             }
         }
         this.invalidateRect(0, 0, textureSize.width - 1, textureSize.height - 1);
