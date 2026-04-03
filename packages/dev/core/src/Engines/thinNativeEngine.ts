@@ -2568,36 +2568,28 @@ export class ThinNativeEngine extends ThinEngine {
             throw new Error(`Reading cubemap faces is not supported, but faceIndex is ${faceIndex}.`);
         }
 
-        // readTexture prepares the promise and buffer, then COMMAND_READTEXTURE
-        // does the encoder blit + async readback inside the current frame.
-        const promise = this._engine.readTexture(
-            texture._hardwareTexture?.underlyingResource,
-            level ?? 0,
-            x ?? 0,
-            y ?? 0,
-            width,
-            height,
-            buffer?.buffer ?? null,
-            buffer?.byteOffset ?? 0,
-            buffer?.byteLength ?? 0
+        return (
+            this._engine
+                .readTexture(
+                    texture._hardwareTexture?.underlyingResource,
+                    level ?? 0,
+                    x ?? 0,
+                    y ?? 0,
+                    width,
+                    height,
+                    buffer?.buffer ?? null,
+                    buffer?.byteOffset ?? 0,
+                    buffer?.byteLength ?? 0
+                )
+                // eslint-disable-next-line github/no-then
+                .then((rawBuffer) => {
+                    if (!buffer) {
+                        buffer = new Uint8Array(rawBuffer);
+                    }
+
+                    return buffer;
+                })
         );
-
-        this._commandBufferEncoder.startEncodingCommand(_native.Engine.COMMAND_READTEXTURE);
-        this._commandBufferEncoder.encodeCommandArgAsNativeData(texture._hardwareTexture!.underlyingResource);
-        this._commandBufferEncoder.encodeCommandArgAsUInt32(level ?? 0);
-        this._commandBufferEncoder.encodeCommandArgAsUInt32(x ?? 0);
-        this._commandBufferEncoder.encodeCommandArgAsUInt32(y ?? 0);
-        this._commandBufferEncoder.encodeCommandArgAsUInt32(width);
-        this._commandBufferEncoder.encodeCommandArgAsUInt32(height);
-        this._commandBufferEncoder.finishEncodingCommand();
-
-        // eslint-disable-next-line github/no-then
-        return promise.then((rawBuffer) => {
-            if (!buffer) {
-                buffer = new Uint8Array(rawBuffer);
-            }
-            return buffer;
-        });
     }
 
     public override startTimeQuery(): Nullable<_TimeToken> {
