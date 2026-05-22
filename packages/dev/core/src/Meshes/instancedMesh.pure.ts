@@ -678,6 +678,20 @@ export function RegisterInstancedMesh(): void {
     };
 
     Mesh.prototype.registerInstancedBuffer = function (kind: string, stride: number): void {
+        // Hot-switch ColorKind -> ColorInstanceKind for backward compatibility with native engines.
+        // BabylonNative's shader compiler maps the "color" attribute to bgfx::Attrib::Color0 (a per-vertex slot),
+        // so per-instance data registered under "color" cannot be delivered through bgfx's instance data
+        // buffer (which only populates TEXCOORD3..7 / i_data4..i_data0). Mirror the same swap already used in
+        // thinInstanceMesh.ts so the engine-facing attribute name becomes "instanceColor", which BabylonNative
+        // routes to bgfx::Attrib::TexCoord3 (an instance slot). WebGL/WebGPU shaders already declare
+        // "instanceColor" via MaterialHelper when isVerticesDataPresent(ColorInstanceKind) is true, so this
+        // change is transparent on those backends. The public `mesh.instancedBuffers.color` API is preserved
+        // by keeping the original `kind` for user-facing dictionary entries.
+        const userKind = kind;
+        if (kind === VertexBuffer.ColorKind) {
+            kind = VertexBuffer.ColorInstanceKind;
+        }
+
         // Remove existing one (shared VBO)
         this._userInstancedBuffersStorage?.vertexBuffers[kind]?.dispose();
 
@@ -709,8 +723,8 @@ export function RegisterInstancedMesh(): void {
             };
         }
 
-        // Creates an empty property for this kind
-        this.instancedBuffers[kind] = null;
+        // Creates an empty property for this kind (user-facing key preserves original kind for backward compatibility)
+        this.instancedBuffers[userKind] = null;
 
         this._userInstancedBuffersStorage.strides[kind] = stride;
         this._userInstancedBuffersStorage.sizes[kind] = stride * 32; // Initial size
@@ -721,7 +735,7 @@ export function RegisterInstancedMesh(): void {
             : null;
 
         for (const instance of this.instances) {
-            instance.instancedBuffers[kind] = null;
+            instance.instancedBuffers[userKind] = null;
         }
 
         this._invalidateInstanceVertexArrayObject();
@@ -748,7 +762,10 @@ export function RegisterInstancedMesh(): void {
             perPassVertexBuffers = this._userInstancedBuffersStorage.renderPasses[currentRenderPassId];
         }
 
-        for (const kind in this.instancedBuffers) {
+        for (const userKind in this.instancedBuffers) {
+            // Translate user-facing key to storage key (mirrors the swap in registerInstancedBuffer).
+            const kind = userKind === VertexBuffer.ColorKind ? VertexBuffer.ColorInstanceKind : userKind;
+
             let size = this._userInstancedBuffersStorage.sizes[kind];
             const stride = this._userInstancedBuffersStorage.strides[kind];
 
@@ -778,7 +795,7 @@ export function RegisterInstancedMesh(): void {
             // Update data buffer
             let offset = 0;
             if (renderSelf) {
-                const value = this.instancedBuffers[kind] ?? 0;
+                const value = this.instancedBuffers[userKind] ?? 0;
 
                 if (value.toArray) {
                     value.toArray(data, offset);
@@ -794,7 +811,7 @@ export function RegisterInstancedMesh(): void {
             for (let instanceIndex = 0; instanceIndex < instanceCount; instanceIndex++) {
                 const instance = visibleInstances![instanceIndex];
 
-                const value = instance.instancedBuffers[kind] ?? 0;
+                const value = instance.instancedBuffers[userKind] ?? 0;
 
                 if (value.toArray) {
                     value.toArray(data, offset);
@@ -857,7 +874,9 @@ export function RegisterInstancedMesh(): void {
             this.instances[0].dispose();
         }
 
-        for (const kind in this.instancedBuffers) {
+        for (const userKind in this.instancedBuffers) {
+            // Translate user-facing key to storage key (mirrors the swap in registerInstancedBuffer).
+            const kind = userKind === VertexBuffer.ColorKind ? VertexBuffer.ColorInstanceKind : userKind;
             if (this._userInstancedBuffersStorage.vertexBuffers[kind]) {
                 this._userInstancedBuffersStorage.vertexBuffers[kind].dispose();
             }
