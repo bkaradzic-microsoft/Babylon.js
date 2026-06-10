@@ -11,6 +11,8 @@ export class NativeRenderTargetWrapper extends RenderTargetWrapper {
     private __framebuffer: Nullable<NativeFramebuffer> = null;
     // eslint-disable-next-line @typescript-eslint/naming-convention
     private __framebufferDepthStencil: Nullable<NativeFramebuffer> = null;
+    // eslint-disable-next-line @typescript-eslint/naming-convention
+    private __framebuffers: Nullable<NativeFramebuffer[]> = null;
 
     public get _framebuffer(): Nullable<NativeFramebuffer> {
         return this.__framebuffer;
@@ -21,6 +23,23 @@ export class NativeRenderTargetWrapper extends RenderTargetWrapper {
             this._engine._releaseFramebufferObjects(this.__framebuffer);
         }
         this.__framebuffer = framebuffer;
+    }
+
+    /**
+     * For layered (2D array) render targets, holds one framebuffer per layer.
+     * @internal
+     */
+    public get _framebuffers(): Nullable<NativeFramebuffer[]> {
+        return this.__framebuffers;
+    }
+
+    public set _framebuffers(framebuffers: Nullable<NativeFramebuffer[]>) {
+        if (this.__framebuffers) {
+            for (const framebuffer of this.__framebuffers) {
+                this._engine._releaseFramebufferObjects(framebuffer);
+            }
+        }
+        this.__framebuffers = framebuffers;
     }
 
     public get _framebufferDepthStencil(): Nullable<NativeFramebuffer> {
@@ -42,6 +61,7 @@ export class NativeRenderTargetWrapper extends RenderTargetWrapper {
     public override dispose(disposeOnlyFramebuffers = false): void {
         this._framebuffer = null;
         this._framebufferDepthStencil = null;
+        this._framebuffers = null;
 
         super.dispose(disposeOnlyFramebuffers);
     }

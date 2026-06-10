@@ -362,12 +362,12 @@ export class ThinNativeEngine extends ThinEngine {
             forceBitmapOverHTMLImageElement: true,
             supportRenderAndCopyToLodForFloatTextures: false,
             supportDepthStencilTexture: false,
-            supportShadowSamplers: false,
+            supportShadowSamplers: true,
             uniformBufferHardCheckMatrix: false,
             allowTexturePrefiltering: false,
             trackUbosInFrame: false,
             checkUbosContentBeforeUpload: false,
-            supportCSM: false,
+            supportCSM: true,
             basisNeedsPOT: false,
             support3DTextures: false,
             needTypeSuffixInShaderConstants: false,
@@ -2015,6 +2015,38 @@ export class ThinNativeEngine extends ThinEngine {
         const width = (<{ width: number; height: number; layers?: number }>size).width ?? <number>size;
         const height = (<{ width: number; height: number; layers?: number }>size).height ?? <number>size;
 
+        if (nativeRTWrapper._framebuffers) {
+            // Layered (2D array) render target, e.g. a CSM shadow map. Native framebuffers
+            // are self-contained, so the depth buffer must live inside each per-layer
+            // framebuffer alongside its color array slice. We allocate a single *sampleable*
+            // depth 2D-array (one slice per cascade) and attach the matching slice into each
+            // per-layer framebuffer. The array is then bound directly as the shadow sampler
+            // (sampler2DArrayShadow) for hardware PCF when a comparison function is requested.
+            const colorTexture = nativeRTWrapper.texture;
+            const colorResource = colorTexture?._hardwareTexture ? colorTexture._hardwareTexture.underlyingResource : null;
+            const layers = nativeRTWrapper._framebuffers.length;
+            const comparison = (options.comparisonFunction || 0) !== 0;
+
+            const depthResource = texture._hardwareTexture!.underlyingResource;
+            this._engine.initializeTexture(depthResource, width, height, false, 0, true, false, samples, layers, true, comparison, generateStencil);
+
+            const framebuffers: NativeFramebuffer[] = [];
+            for (let layer = 0; layer < layers; ++layer) {
+                framebuffers.push(this._engine.createFrameBuffer(colorResource, width, height, generateStencil, false, samples, layer, depthResource, layer));
+            }
+            nativeRTWrapper._framebuffers = framebuffers;
+
+            texture.baseWidth = width;
+            texture.baseHeight = height;
+            texture.width = width;
+            texture.height = height;
+            texture.depth = layers;
+            texture.is2DArray = true;
+            texture._comparisonFunction = options.comparisonFunction || 0;
+            texture.isReady = true;
+            return texture;
+        }
+
         const framebuffer = this._engine.createFrameBuffer(texture._hardwareTexture!.underlyingResource, width, height, generateStencil, true, samples);
         nativeRTWrapper._framebufferDepthStencil = framebuffer;
         return texture;
@@ -2151,14 +2183,11 @@ export class ThinNativeEngine extends ThinEngine {
         const height = (<{ width: number; height: number; layers?: number }>size).height ?? <number>size;
 
         const layers = (<{ width: number; height: number; layers?: number }>size).layers || 0;
-        if (layers !== 0) {
-            throw new Error("Texture layers are not supported in Babylon Native");
-        }
 
         const nativeTexture = texture._hardwareTexture!.underlyingResource;
         const nativeTextureFormat = getNativeTextureFormat(format, type);
         // REVIEW: We are always setting the renderTarget flag as we don't know whether the texture will be used as a render target.
-        this._engine.initializeTexture(nativeTexture, width, height, generateMipMaps, nativeTextureFormat, true, useSRGBBuffer, samples);
+        this._engine.initializeTexture(nativeTexture, width, height, generateMipMaps, nativeTextureFormat, true, useSRGBBuffer, samples, layers);
         this._setTextureSampling(nativeTexture, getNativeSamplingMode(samplingMode));
 
         texture._useSRGBBuffer = useSRGBBuffer;
@@ -2167,6 +2196,7 @@ export class ThinNativeEngine extends ThinEngine {
         texture.width = width;
         texture.height = height;
         texture.depth = layers;
+        texture.is2DArray = layers > 0;
         texture.isReady = true;
         texture.samples = samples;
         texture.generateMipMaps = generateMipMaps;
@@ -2202,17 +2232,40 @@ export class ThinNativeEngine extends ThinEngine {
         const texture = colorAttachment || (noColorAttachment ? null : this._createInternalTexture(size, options, true, InternalTextureSource.RenderTarget));
         const width = (<{ width: number; height: number; layers?: number }>size).width ?? <number>size;
         const height = (<{ width: number; height: number; layers?: number }>size).height ?? <number>size;
+        const layers = (<{ width: number; height: number; layers?: number }>size).layers || 0;
 
-        const framebuffer = this._engine.createFrameBuffer(
-            texture ? texture._hardwareTexture!.underlyingResource : null,
-            width,
-            height,
-            generateStencilBuffer,
-            generateDepthBuffer,
-            samples
-        );
+        if (layers > 0) {
+            // Layered (2D array) render target: create one framebuffer per layer, each
+            // attaching a single array slice. Babylon renders each layer (e.g. each CSM
+            // cascade) by binding the corresponding per-layer framebuffer.
+            const framebuffers: NativeFramebuffer[] = [];
+            for (let layer = 0; layer < layers; ++layer) {
+                framebuffers.push(
+                    this._engine.createFrameBuffer(
+                        texture ? texture._hardwareTexture!.underlyingResource : null,
+                        width,
+                        height,
+                        generateStencilBuffer,
+                        generateDepthBuffer,
+                        samples,
+                        layer
+                    )
+                );
+            }
+            rtWrapper._framebuffers = framebuffers;
+        } else {
+            const framebuffer = this._engine.createFrameBuffer(
+                texture ? texture._hardwareTexture!.underlyingResource : null,
+                width,
+                height,
+                generateStencilBuffer,
+                generateDepthBuffer,
+                samples
+            );
 
-        rtWrapper._framebuffer = framebuffer;
+            rtWrapper._framebuffer = framebuffer;
+        }
+
         rtWrapper._generateDepthBuffer = generateDepthBuffer;
         rtWrapper._generateStencilBuffer = generateStencilBuffer;
         rtWrapper._samples = samples;
@@ -2236,7 +2289,15 @@ export class ThinNativeEngine extends ThinEngine {
         texture.samplingMode = samplingMode;
     }
 
-    public override bindFramebuffer(texture: RenderTargetWrapper, faceIndex?: number, requiredWidth?: number, requiredHeight?: number, forceFullscreenViewport?: boolean): void {
+    public override bindFramebuffer(
+        texture: RenderTargetWrapper,
+        faceIndex?: number,
+        requiredWidth?: number,
+        requiredHeight?: number,
+        forceFullscreenViewport?: boolean,
+        lodLevel = 0,
+        layer = 0
+    ): void {
         const nativeRTWrapper = texture as NativeRenderTargetWrapper;
 
         if (this._currentRenderTarget) {
@@ -2253,8 +2314,14 @@ export class ThinNativeEngine extends ThinEngine {
             throw new Error("Required width/height for frame buffers not yet supported in NativeEngine.");
         }
 
+        if (lodLevel) {
+            throw new Error("LOD levels for frame buffers are not yet supported in NativeEngine.");
+        }
+
         if (nativeRTWrapper._framebufferDepthStencil) {
             this._bindUnboundFramebuffer(nativeRTWrapper._framebufferDepthStencil);
+        } else if (nativeRTWrapper._framebuffers) {
+            this._bindUnboundFramebuffer(nativeRTWrapper._framebuffers[layer]);
         } else {
             this._bindUnboundFramebuffer(nativeRTWrapper._framebuffer);
         }
