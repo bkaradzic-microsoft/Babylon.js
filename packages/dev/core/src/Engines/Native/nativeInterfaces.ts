@@ -95,6 +95,20 @@ export interface INativeEngine {
         generateMipMaps: boolean,
         invertY: boolean
     ): void;
+    updateTextureDirectly(
+        texture: NativeTexture,
+        data: ArrayBufferView,
+        faceIndex: number,
+        lod: number,
+        baseWidth: number,
+        baseHeight: number,
+        mipWidth: number,
+        mipHeight: number,
+        format: number,
+        isCube: boolean,
+        hasMips: boolean,
+        invertY: boolean
+    ): void;
     loadCubeTexture(texture: NativeTexture, data: Array<ArrayBufferView>, generateMips: boolean, invertY: boolean, srgb: boolean, onSuccess: () => void, onError: () => void): void;
     loadCubeTextureWithMips(texture: NativeTexture, data: Array<Array<ArrayBufferView>>, invertY: boolean, srgb: boolean, onSuccess: () => void, onError: () => void): void;
     getTextureWidth(texture: NativeTexture): number;

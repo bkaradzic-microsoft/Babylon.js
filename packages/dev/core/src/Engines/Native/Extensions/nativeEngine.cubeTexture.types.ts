@@ -42,5 +42,11 @@ declare module "../../../Engines/thinNativeEngine.pure" {
             useSRGBBuffer?: boolean,
             buffer?: Nullable<ArrayBufferView>
         ): InternalTexture;
+
+        /**
+         * @internal
+         * No-op on native: cube sampler params are configured via updateTextureSamplingMode.
+         */
+        _setCubeMapTextureParams(texture: InternalTexture, loadMipmap: boolean, maxLevel?: number): void;
     }
 }

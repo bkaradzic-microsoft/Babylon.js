@@ -8,6 +8,7 @@ import { type Scene } from "../../../scene.pure";
 import { type Nullable } from "../../../types";
 import { Constants } from "../../constants";
 import { ThinNativeEngine } from "../../thinNativeEngine.pure";
+import { AbstractEngine } from "../../abstractEngine.pure";
 
 let _Registered = false;
 /**
@@ -54,9 +55,13 @@ export function RegisterNativeEngineCubeTexture(): void {
         const lastDot = rootUrl.lastIndexOf(".");
         const extension = forcedExtension ? forcedExtension : lastDot > -1 ? rootUrl.substring(lastDot).toLowerCase() : "";
 
+        // Single-file container cubemaps (.dds/.ktx/.ktx2) are routed through the shared JS
+        // texture loader below; .env keeps its bespoke path.
+        const loaderPromise = extension === ".env" ? null : AbstractEngine.GetCompatibleTextureLoader(extension);
+
         // TODO: use texture loader to load env files?
         if (extension === ".env") {
-            const onloaddata = (data: ArrayBufferView) => {
+            const onLoadData = (data: ArrayBufferView) => {
                 const info = GetEnvInfo(data)!;
                 texture.width = info.width;
                 texture.height = info.width;
@@ -96,7 +101,7 @@ export function RegisterNativeEngineCubeTexture(): void {
             };
 
             if (buffer) {
-                onloaddata(buffer);
+                onLoadData(buffer);
             } else if (files && files.length === 6) {
                 throw new Error(`Multi-file loading not allowed on env files.`);
             } else {
@@ -109,12 +114,72 @@ export function RegisterNativeEngineCubeTexture(): void {
                 this._loadFile(
                     rootUrl,
                     (data) => {
-                        onloaddata(new Uint8Array(data as ArrayBuffer, 0, (data as ArrayBuffer).byteLength));
+                        onLoadData(new Uint8Array(data as ArrayBuffer, 0, (data as ArrayBuffer).byteLength));
                     },
                     undefined,
                     undefined,
                     true,
                     onInternalError
+                );
+            }
+        } else if (loaderPromise && !(files && files.length === 6)) {
+            // Single-file container (.dds/.ktx/.ktx2) cubemap: route through the shared JS
+            // texture loader. loadCubeData uploads each face/mip via _upload*ToTextureDirectly
+            // and, when createPolynomials is set, computes the diffuse-IBL spherical harmonics
+            // in JS (no GPU readback) and assigns texture._sphericalPolynomial.
+            if (!texture._hardwareTexture) {
+                texture._hardwareTexture = this._createHardwareTexture();
+            }
+            const onLoadDataAsync = async (data: ArrayBufferView): Promise<void> => {
+                try {
+                    const loader = await loaderPromise;
+                    loader.loadCubeData(
+                        data,
+                        texture,
+                        createPolynomials,
+                        (loadData?: any) => {
+                            // Assign the JS-computed diffuse-IBL spherical harmonics so PBR
+                            // materials find them synchronously instead of falling back to
+                            // the GPU-readback SH path (which never resolves on Native).
+                            // Also forward loadData so the prefiltered-cube onLoad wrapper
+                            // (createPrefilteredCubeTexture) can set _source and the SH too.
+                            if (loadData?.info?.sphericalPolynomial) {
+                                texture._sphericalPolynomial = loadData.info.sphericalPolynomial;
+                            }
+                            texture.isReady = true;
+                            texture.getEngine().updateTextureSamplingMode(Texture.TRILINEAR_SAMPLINGMODE, texture);
+                            texture.onLoadedObservable.notifyObservers(texture);
+                            texture.onLoadedObservable.clear();
+                            if (onLoad) {
+                                onLoad(loadData);
+                            }
+                        },
+                        (message?: string, exception?: any) => {
+                            if (onError) {
+                                onError(message, exception);
+                            }
+                        }
+                    );
+                } catch (exception: any) {
+                    if (onError) {
+                        onError(exception?.message, exception);
+                    }
+                }
+            };
+            if (buffer) {
+                void onLoadDataAsync(buffer);
+            } else {
+                this._loadFile(
+                    rootUrl,
+                    (data) => void onLoadDataAsync(new Uint8Array(data as ArrayBuffer)),
+                    undefined,
+                    undefined,
+                    true,
+                    (request?: IWebRequest, exception?: any) => {
+                        if (onError && request) {
+                            onError(request.status + " " + request.statusText, exception);
+                        }
+                    }
                 );
             }
         } else {
@@ -152,4 +217,8 @@ export function RegisterNativeEngineCubeTexture(): void {
 
         return texture;
     };
+
+    // Native configures cube sampling via updateTextureSamplingMode; there are no per-cubemap
+    // GL sampler params to set. Implemented as a no-op so the shared loaders (which call it) work.
+    ThinNativeEngine.prototype._setCubeMapTextureParams = function (_texture: InternalTexture, _loadMipmap: boolean, _maxLevel?: number): void {};
 }
