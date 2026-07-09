@@ -158,7 +158,8 @@ export function RegisterNativeEngineCubeTexture(): void {
                             if (onError) {
                                 onError(message, exception);
                             }
-                        }
+                        },
+                        loaderOptions
                     );
                 } catch (exception: any) {
                     if (onError) {

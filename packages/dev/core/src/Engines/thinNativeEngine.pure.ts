@@ -1881,6 +1881,9 @@ export class ThinNativeEngine extends ThinEngine {
         compression: Nullable<string> = null,
         level: number = 0
     ): void {
+        if (compression) {
+            throw new Error("updateRawCubeTexture with a compressed format is not supported on Babylon Native.");
+        }
         texture._bufferViewArray = data;
         texture.format = format;
         texture.type = type;
@@ -2013,7 +2016,7 @@ export class ThinNativeEngine extends ThinEngine {
             mimeType === "image/ktx" ||
             mimeType === "image/ktx2"
         ) {
-            loaderPromise = _GetCompatibleTextureLoader(extension);
+            loaderPromise = _GetCompatibleTextureLoader(extension, mimeType);
         }
 
         if (scene) {
@@ -3304,25 +3307,41 @@ export class ThinNativeEngine extends ThinEngine {
     /**
      * @internal
      */
-    public override _uploadDataToTextureDirectly(texture: InternalTexture, imageData: ArrayBufferView, faceIndex: number = 0, lod: number = 0): void {
+    public override _uploadDataToTextureDirectly(
+        texture: InternalTexture,
+        imageData: ArrayBufferView,
+        faceIndex: number = 0,
+        lod: number = 0,
+        babylonInternalFormat?: number,
+        useTextureWidthAndHeight: boolean = false
+    ): void {
         if (!texture._hardwareTexture) {
             return;
         }
         if (!this._engine.updateTextureDirectly) {
             throw new Error("updateTextureDirectly is not implemented by the current Babylon Native runtime.");
         }
-        const mipWidth = Math.max(1, texture.width >> lod);
-        const mipHeight = Math.max(1, texture.height >> lod);
+        // When useTextureWidthAndHeight is set, the loader has already stored the current mip's
+        // dimensions in texture.width/height (e.g. the KTX2/EXR/Basis uncompressed upload paths);
+        // otherwise the mip size is derived from the base (lod 0) dimensions. babylonInternalFormat,
+        // when provided, overrides texture.format for this upload. Mirrors the WebGL/WebGPU engines.
+        const mipWidth = useTextureWidthAndHeight ? texture.width : Math.max(1, texture.width >> lod);
+        const mipHeight = useTextureWidthAndHeight ? texture.height : Math.max(1, texture.height >> lod);
+        // Base (lod 0) dimensions the native side creates the texture with; recover them from the
+        // current mip when the loader passes per-mip width/height.
+        const baseWidth = useTextureWidthAndHeight ? mipWidth << lod : texture.width;
+        const baseHeight = useTextureWidthAndHeight ? mipHeight << lod : texture.height;
+        const format = babylonInternalFormat === undefined ? texture.format : babylonInternalFormat;
         this._engine.updateTextureDirectly(
             texture._hardwareTexture.underlyingResource,
             imageData,
             faceIndex,
             lod,
-            texture.width,
-            texture.height,
+            baseWidth,
+            baseHeight,
             mipWidth,
             mipHeight,
-            getNativeTextureFormat(texture.format, texture.type),
+            getNativeTextureFormat(format, texture.type),
             texture.isCube,
             texture.generateMipMaps,
             texture.invertY
