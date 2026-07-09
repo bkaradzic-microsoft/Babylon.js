@@ -6,6 +6,7 @@ import { type Nullable, type IndicesArray, type DataArray, type FloatArray, type
 import { type VertexBuffer } from "../Buffers/buffer.pure";
 import { RegisterBufferAlign } from "../Buffers/buffer.align.pure";
 import { InternalTexture, InternalTextureSource } from "../Materials/Textures/internalTexture";
+import { _GetCompatibleTextureLoader } from "../Materials/Textures/Loaders/textureLoaderManager";
 import { type BaseTexture } from "../Materials/Textures/baseTexture.pure";
 import { type VideoTexture } from "../Materials/Textures/videoTexture.pure";
 import { type RenderTargetTexture } from "../Materials/Textures/renderTargetTexture.pure";
@@ -2012,7 +2013,7 @@ export class ThinNativeEngine extends ThinEngine {
             mimeType === "image/ktx" ||
             mimeType === "image/ktx2"
         ) {
-            loaderPromise = AbstractEngine.GetCompatibleTextureLoader(extension);
+            loaderPromise = _GetCompatibleTextureLoader(extension);
         }
 
         if (scene) {
@@ -3275,16 +3276,22 @@ export class ThinNativeEngine extends ThinEngine {
         if (!texture._hardwareTexture) {
             return;
         }
-        // width/height are the mip-level dimensions; the texture's width/height are the base
-        // (lod 0) dimensions the native side creates the texture with. Compressed block data
-        // can't be row-flipped, so invertY is false.
+        if (!this._engine.updateTextureDirectly) {
+            throw new Error("updateTextureDirectly is not implemented by the current Babylon Native runtime.");
+        }
+        // width/height are the mip-level dimensions. The native side creates the texture from the
+        // base (lod 0) dimensions; some loaders (notably the KTX cube path) upload level data
+        // before assigning texture.width/height, so fall back to the first (lod 0) mip size when
+        // they are still unset. Compressed block data can't be row-flipped, so invertY is false.
+        const baseWidth = texture.width || width;
+        const baseHeight = texture.height || height;
         this._engine.updateTextureDirectly(
             texture._hardwareTexture.underlyingResource,
             data,
             faceIndex,
             lod,
-            texture.width,
-            texture.height,
+            baseWidth,
+            baseHeight,
             width,
             height,
             getNativeTextureFormat(internalFormat, texture.type),
@@ -3300,6 +3307,9 @@ export class ThinNativeEngine extends ThinEngine {
     public override _uploadDataToTextureDirectly(texture: InternalTexture, imageData: ArrayBufferView, faceIndex: number = 0, lod: number = 0): void {
         if (!texture._hardwareTexture) {
             return;
+        }
+        if (!this._engine.updateTextureDirectly) {
+            throw new Error("updateTextureDirectly is not implemented by the current Babylon Native runtime.");
         }
         const mipWidth = Math.max(1, texture.width >> lod);
         const mipHeight = Math.max(1, texture.height >> lod);

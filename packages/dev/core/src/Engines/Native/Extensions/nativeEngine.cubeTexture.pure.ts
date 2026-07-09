@@ -8,7 +8,7 @@ import { type Scene } from "../../../scene.pure";
 import { type Nullable } from "../../../types";
 import { Constants } from "../../constants";
 import { ThinNativeEngine } from "../../thinNativeEngine.pure";
-import { AbstractEngine } from "../../abstractEngine.pure";
+import { _GetCompatibleTextureLoader } from "../../../Materials/Textures/Loaders/textureLoaderManager";
 
 let _Registered = false;
 /**
@@ -57,7 +57,7 @@ export function RegisterNativeEngineCubeTexture(): void {
 
         // Single-file container cubemaps (.dds/.ktx/.ktx2) are routed through the shared JS
         // texture loader below; .env keeps its bespoke path.
-        const loaderPromise = extension === ".env" ? null : AbstractEngine.GetCompatibleTextureLoader(extension);
+        const loaderPromise = extension === ".env" ? null : _GetCompatibleTextureLoader(extension);
 
         // TODO: use texture loader to load env files?
         if (extension === ".env") {
