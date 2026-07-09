@@ -122,7 +122,7 @@ export function RegisterNativeEngineCubeTexture(): void {
                     onInternalError
                 );
             }
-        } else if (loaderPromise && !(files && files.length === 6)) {
+        } else if (loaderPromise && !files) {
             // Single-file container (.dds/.ktx/.ktx2) cubemap: route through the shared JS
             // texture loader. loadCubeData uploads each face/mip via _upload*ToTextureDirectly
             // and, when createPolynomials is set, computes the diffuse-IBL spherical harmonics

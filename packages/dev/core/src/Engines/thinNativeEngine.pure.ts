@@ -2066,8 +2066,8 @@ export class ThinNativeEngine extends ThinEngine {
             }
         };
 
-        // processing for non-image formats handled by an IInternalTextureLoader (.basis/.ktx/.ktx2):
-        // fetch the container and let the loader upload each (face, mip) through
+        // Non-image container formats handled by an IInternalTextureLoader (.basis/.ktx/.ktx2/.ies):
+        // fetch the container and let the loader upload each 2D mip level through
         // _uploadDataToTextureDirectly / _uploadCompressedDataToTextureDirectly.
         if (loaderPromise) {
             if (!texture._hardwareTexture) {

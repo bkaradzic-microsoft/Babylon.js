@@ -95,7 +95,7 @@ export interface INativeEngine {
         generateMipMaps: boolean,
         invertY: boolean
     ): void;
-    updateTextureDirectly(
+    updateTextureDirectly?(
         texture: NativeTexture,
         data: ArrayBufferView,
         faceIndex: number,
