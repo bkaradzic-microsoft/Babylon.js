@@ -3148,9 +3148,18 @@ export class ThinNativeEngine extends ThinEngine {
             return;
         }
 
-        // Flatten a {group, binding} location to a single bgfx stage. Group 0 bindings map 1:1;
-        // group 1+ bindings are offset so they never collide with group-0 stages.
-        const toStage = (group: number, binding: number): number => (group === 0 ? binding : 16 + binding);
+        // Flatten a {group, binding} location to a single bgfx compute stage (== the D3D11 register the
+        // shader was compiled with). Group-0 bindings map 1:1 (buffers u0-u2, randomTexture[2] s3/s4).
+        // Group-1 gradient/noise textures are authored in gpuUpdateParticles.compute.fx at flattened
+        // bindings 16+local (17,19,...); D3D11 has only 16 sampler slots, so we compact them into the
+        // free s5-s13 range. This MUST match the binding numbers in that .fx file:
+        //   local 1/3/5/7/9/11 -> 5/6/7/8/9/10, 13 -> 11, 14 -> 12, 15 -> 13.
+        const toStage = (group: number, binding: number): number => {
+            if (group === 0) {
+                return binding;
+            }
+            return binding <= 13 ? (binding + 9) >> 1 : binding - 2;
+        };
 
         const buffers: Array<{ stage: number; native: NativeData; access: number }> = [];
         const textures: Array<{ stage: number; native: NativeData }> = [];

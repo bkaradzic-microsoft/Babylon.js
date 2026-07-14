@@ -132,31 +132,36 @@ layout(std430, binding = 1) readonly buffer ParticlesInBuffer { Particle particl
 layout(std430, binding = 2) buffer ParticlesOutBuffer { Particle particles[]; } particlesOut;
 layout(binding = 3) uniform highp sampler2D randomTexture;
 layout(binding = 4) uniform highp sampler2D randomTexture2;
+// Group-1 gradient/noise textures. WebGPU (WGSL) reserves 2 binding slots per texture, so these were
+// historically numbered 16+localBinding (17,19,...). On Babylon Native the GLSL binding IS the D3D11
+// sampler register, and D3D11 exposes only 16 sampler slots (s0-s15), so 17+ overflowed (FXC X4509).
+// They are compacted here into free slots s5-s13 (s0-s4 are used by the buffers + randomTexture[2]).
+// The native engine's toStage() (thinNativeEngine.pure.ts) mirrors this exact mapping.
 #ifdef SIZEGRADIENTS
-layout(binding = 17) uniform highp sampler2D sizeGradientTexture;
+layout(binding = 5) uniform highp sampler2D sizeGradientTexture;
 #endif
 #ifdef ANGULARSPEEDGRADIENTS
-layout(binding = 19) uniform highp sampler2D angularSpeedGradientTexture;
+layout(binding = 6) uniform highp sampler2D angularSpeedGradientTexture;
 #endif
 #ifdef VELOCITYGRADIENTS
-layout(binding = 21) uniform highp sampler2D velocityGradientTexture;
+layout(binding = 7) uniform highp sampler2D velocityGradientTexture;
 #endif
 #ifdef LIMITVELOCITYGRADIENTS
-layout(binding = 23) uniform highp sampler2D limitVelocityGradientTexture;
+layout(binding = 8) uniform highp sampler2D limitVelocityGradientTexture;
 #endif
 #ifdef DRAGGRADIENTS
-layout(binding = 25) uniform highp sampler2D dragGradientTexture;
+layout(binding = 9) uniform highp sampler2D dragGradientTexture;
 #endif
 #ifdef NOISE
-layout(binding = 27) uniform highp sampler2D noiseTexture;
+layout(binding = 10) uniform highp sampler2D noiseTexture;
 #endif
 #ifdef FLOWMAP
-layout(binding = 29) uniform highp sampler2D flowMapTexture;
+layout(binding = 11) uniform highp sampler2D flowMapTexture;
 #endif
 #ifdef MESHEMITTER
-layout(binding = 30) uniform highp sampler2D meshPositionTexture;
+layout(binding = 12) uniform highp sampler2D meshPositionTexture;
 #ifdef MESHNORMALS
-layout(binding = 31) uniform highp sampler2D meshNormalTexture;
+layout(binding = 13) uniform highp sampler2D meshNormalTexture;
 #endif
 #endif
 vec3 getRandomVec3(float offset, float vertexID) {
