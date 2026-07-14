@@ -3099,9 +3099,22 @@ export class ThinNativeEngine extends ThinEngine {
         _entryPoint: string
     ): void {
         const context = pipelineContext as NativeComputePipelineContext;
+        // Note: `defines` were already consumed by the shader PreProcess step (#ifdef resolution +
+        // numeric #define -> const). We must NOT re-prepend them here.
+        // The GLSL kernel starts with `#version 310 es`. In the ES profile glslang requires the
+        // `#version` directive to be the very first token in the shader, before any comment or
+        // newline. ComputeEffect prepends a `//#define SHADER_NAME ...` comment, so move the
+        // `#version` line back to the very front here.
         let source = computeSourceCode;
-        if (defines) {
-            source = defines + "\n" + source;
+        const versionIdx = source.indexOf("#version");
+        if (versionIdx > 0) {
+            const before = source.substring(0, versionIdx);
+            const versionEnd = source.indexOf("\n", versionIdx);
+            if (versionEnd !== -1) {
+                const versionLine = source.substring(versionIdx, versionEnd + 1);
+                const after = source.substring(versionEnd + 1);
+                source = versionLine + before + after;
+            }
         }
         context.computeSourceCode = source;
         context.nativeProgram = this._engine.createComputeProgram!(source);
