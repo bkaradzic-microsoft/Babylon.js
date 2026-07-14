@@ -69,10 +69,11 @@ export class EXT_lights_ies implements IGLTFLoaderExtension {
 
             let babylonSpotLight: SpotLight;
             let light: IEXTLightsIES_Light;
+            let name: string;
 
             const transformNode = await this._loader.loadNodeAsync(context, node, (babylonMesh) => {
                 light = ArrayItem.Get(extensionContext, this._lights, extension.light);
-                const name = light.name || babylonMesh.name;
+                name = light.name || babylonMesh.name;
 
                 this._loader.babylonScene._blockEntityCollection = !!this._loader._assetContainer;
 
@@ -106,7 +107,7 @@ export class EXT_lights_ies implements IGLTFLoaderExtension {
                 bufferData = await this._loader.loadBufferViewAsync(`/bufferViews/${bufferView.index}`, bufferView);
             }
             babylonSpotLight!.iesProfileTexture = new Texture(
-                name + "_iesProfile",
+                name! + "_iesProfile",
                 this._loader.babylonScene,
                 true,
                 false,
