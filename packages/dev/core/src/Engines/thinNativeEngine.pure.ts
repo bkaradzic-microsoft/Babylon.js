@@ -262,9 +262,9 @@ export class ThinNativeEngine extends ThinEngine {
     private _camera: Nullable<INativeCamera>;
     private _commandBufferEncoder: CommandBufferEncoder;
     /** @internal Cache of compiled compute effects, keyed like the WebGPU engine. */
-    public _compiledComputeEffects: { [key: string]: ComputeEffect } = {};
+    public _compiledComputeEffects: { [key: string]: ComputeEffect };
     /** @internal Internal storage buffers that bridge params UniformBuffers into SSBOs for compute. */
-    private _computeUniformBridge = new WeakMap<UniformBuffer, NativeDataBuffer>();
+    private _computeUniformBridge: WeakMap<UniformBuffer, NativeDataBuffer>;
     private _frameStats: NativeFrameStats;
     private _boundBuffersVertexArray: any;
     private _currentDepthTest: number;
@@ -309,6 +309,8 @@ export class ThinNativeEngine extends ThinEngine {
         this._commandBufferEncoder = new CommandBufferEncoder(this._engine);
         this._frameStats = { gpuTimeNs: Number.NaN };
         this._boundBuffersVertexArray = null;
+        this._compiledComputeEffects = {};
+        this._computeUniformBridge = new WeakMap();
         this._currentDepthTest = _native.Engine.DEPTH_TEST_LEQUAL;
         this._depthTestEnabled = true;
         this._stencilTest = false;
@@ -698,6 +700,17 @@ export class ThinNativeEngine extends ThinEngine {
                             getNativeAttribType(vertexBuffer.type),
                             vertexBuffer.normalized,
                             vertexBuffer.getInstanceDivisor()
+                        );
+                    } else if (buffer && buffer.nativeStorageBuffer && vertexBuffer.getInstanceDivisor() === 1 && this._engine.recordStorageBuffer) {
+                        // GPU compute-written per-instance source (e.g. GPU particles): the native
+                        // engine repacks it into bgfx i_data slots on the GPU (see InstanceRepacker).
+                        this._engine.recordStorageBuffer(
+                            vertexArray,
+                            buffer.nativeStorageBuffer,
+                            location,
+                            vertexBuffer.effectiveByteOffset,
+                            vertexBuffer.effectiveByteStride,
+                            vertexBuffer.getSize()
                         );
                     }
                 }

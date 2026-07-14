@@ -54,6 +54,14 @@ export interface INativeEngine {
         instanceDivisor: number
     ): void;
     updateDynamicVertexBuffer(vertexBuffer: NativeData, dataBuffer: ArrayBufferLike, dataByteOffset: number, dataByteLength: number, vertexByteOffset?: number): void;
+    recordStorageBuffer?(
+        vertexArray: NativeData,
+        storageBuffer: NativeData,
+        location: number,
+        byteOffset: number,
+        byteStride: number,
+        numElements: number
+    ): void;
 
     createProgram(vertexShader: string, fragmentShader: string): NativeProgram;
     createProgramAsync(vertexShader: string, fragmentShader: string, onSuccess: () => void, onError: (error: Error) => void): NativeProgram;

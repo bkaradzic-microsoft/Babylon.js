@@ -35,6 +35,10 @@ export class UniformBuffer {
     private _uniformLocationPointer: number;
     private _needSync: boolean;
     private _noUBO: boolean;
+    // When true, the buffer maintains its std140 CPU data (like a real UBO) but never creates or
+    // uploads a GPU uniform buffer. Used on engines without native UBO support (e.g. Babylon Native)
+    // where a params buffer must expose its CPU data (getData()) to be mirrored into a compute SSBO.
+    private _cpuOnlyUBO: boolean;
     private _currentEffect: Effect;
     private _currentEffectName: string;
     private _name: string;
@@ -237,10 +241,22 @@ export class UniformBuffer {
      * @param name to assign to the buffer (debugging purpose)
      * @param forceNoUniformBuffer define that this object must not rely on UBO objects
      * @param trackUBOsInFrame define if the UBOs should be tracked in the frame (default: undefined - will use the value from Engine._features.trackUbosInFrame)
+     * @param forceCpuOnlyUniformBuffer define that this object must keep its std140 CPU data but never create/upload a GPU UBO (used for compute on engines without native UBO support)
      */
-    constructor(engine: AbstractEngine, data?: number[], dynamic = false, name?: string, forceNoUniformBuffer = false, trackUBOsInFrame?: boolean) {
+    constructor(
+        engine: AbstractEngine,
+        data?: number[],
+        dynamic = false,
+        name?: string,
+        forceNoUniformBuffer = false,
+        trackUBOsInFrame?: boolean,
+        forceCpuOnlyUniformBuffer = false
+    ) {
         this._engine = engine;
-        this._noUBO = !engine.supportsUniformBuffers || forceNoUniformBuffer;
+        this._cpuOnlyUBO = forceCpuOnlyUniformBuffer;
+        // In CPU-only mode we deliberately take the "UBO" code paths (std140 layout in addUniform,
+        // ForUniform update methods that fill _bufferData) but skip all GPU buffer creation/upload.
+        this._noUBO = (!engine.supportsUniformBuffers || forceNoUniformBuffer) && !forceCpuOnlyUniformBuffer;
         this._dynamic = dynamic;
         this._name = name ?? "no-name";
 
@@ -253,7 +269,7 @@ export class UniformBuffer {
         this._needSync = false;
         this._trackUBOsInFrame = false;
 
-        if ((trackUBOsInFrame === undefined && this._engine._features.trackUbosInFrame) || trackUBOsInFrame === true) {
+        if (!this._cpuOnlyUBO && ((trackUBOsInFrame === undefined && this._engine._features.trackUbosInFrame) || trackUBOsInFrame === true)) {
             this._buffers = [];
             this._bufferIndex = -1;
             this._bufferUpdatedLastFrame = false;
@@ -562,6 +578,16 @@ export class UniformBuffer {
         if (this._noUBO) {
             return;
         }
+        if (this._cpuOnlyUBO) {
+            // Allocate the std140 CPU buffer once; never create a GPU uniform buffer.
+            if (this._bufferData) {
+                return;
+            }
+            this._fillAlignment(4);
+            this._bufferData = new Float32Array(this._data);
+            this._needSync = false;
+            return;
+        }
         if (this._buffer) {
             return; // nothing to do
         }
@@ -593,7 +619,7 @@ export class UniformBuffer {
 
     /** @internal */
     public _rebuild(): void {
-        if (this._noUBO || !this._bufferData) {
+        if (this._noUBO || this._cpuOnlyUBO || !this._bufferData) {
             return;
         }
 
@@ -665,6 +691,13 @@ export class UniformBuffer {
      */
     public update(): void {
         if (this._noUBO) {
+            return;
+        }
+        if (this._cpuOnlyUBO) {
+            // Ensure the CPU std140 buffer is allocated; no GPU upload is performed here.
+            if (!this._bufferData) {
+                this.create();
+            }
             return;
         }
 

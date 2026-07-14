@@ -94,7 +94,11 @@ export class ComputeShaderParticleSystem implements IGPUParticleSystemPlatform {
         });
 
         this._simParamsComputeShader?.dispose();
-        this._simParamsComputeShader = new UniformBuffer(this._engine, undefined, undefined, "ComputeShaderParticleSystemUBO");
+        // On engines without native UBO support (e.g. Babylon Native) the params buffer must keep its
+        // std140 CPU data so the compute layer can mirror it into an SSBO. On WebGPU (real UBO support)
+        // the regular GPU uniform-buffer path is used and bound directly to the compute shader.
+        const forceCpuOnlyUBO = !this._engine.supportsUniformBuffers;
+        this._simParamsComputeShader = new UniformBuffer(this._engine, undefined, undefined, "ComputeShaderParticleSystemUBO", false, undefined, forceCpuOnlyUBO);
 
         this._simParamsComputeShader.addUniform("currentCount", 1);
         this._simParamsComputeShader.addUniform("timeDelta", 1);

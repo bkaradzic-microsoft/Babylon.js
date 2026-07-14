@@ -233,6 +233,7 @@
         "Shaders/gpuRenderParticles.vertex.ts": ["shader-store-write"],
         "Shaders/gpuTransform.fragment.ts": ["shader-store-write"],
         "Shaders/gpuTransform.vertex.ts": ["shader-store-write"],
+        "Shaders/gpuUpdateParticles.compute.ts": ["shader-store-write"],
         "Shaders/gpuUpdateParticles.fragment.ts": ["shader-store-write"],
         "Shaders/gpuUpdateParticles.vertex.ts": ["shader-store-write"],
         "Shaders/grain.fragment.ts": ["shader-store-write"],
