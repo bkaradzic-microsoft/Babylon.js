@@ -149,6 +149,10 @@ export class ComputeEffect {
         this._engine = engine;
         this.uniqueId = ComputeEffect._UniqueIdSeed++;
 
+        // Compute was originally a WebGPU-only (WGSL) feature. Engines that consume a different
+        // language for compute (e.g. the native engine, which consumes GLSL) expose it here.
+        this._shaderLanguage = (engine as any)._getComputeShaderLanguage?.() ?? this._shaderLanguage;
+
         this.defines = options.defines ?? "";
         this.onError = options.onError;
         this.onCompiled = options.onCompiled;

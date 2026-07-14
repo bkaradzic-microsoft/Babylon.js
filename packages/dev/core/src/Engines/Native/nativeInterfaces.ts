@@ -57,6 +57,9 @@ export interface INativeEngine {
 
     createProgram(vertexShader: string, fragmentShader: string): NativeProgram;
     createProgramAsync(vertexShader: string, fragmentShader: string, onSuccess: () => void, onError: (error: Error) => void): NativeProgram;
+    createComputeProgram?(computeShader: string): NativeProgram;
+    createStorageBuffer?(byteLength: number, asVertexBuffer: boolean): NativeData;
+    updateStorageBuffer?(buffer: NativeData, dataBuffer: ArrayBufferLike, dataByteOffset: number, dataByteLength: number, destByteOffset: number): void;
     getUniforms(shaderProgram: NativeProgram, uniformsNames: string[]): WebGLUniformLocation[];
     getAttributes(shaderProgram: NativeProgram, attributeNames: string[]): number[];
 
@@ -399,6 +402,8 @@ interface INativeEngineConstructor {
     readonly COMMAND_SETVIEWPORT: NativeData;
     readonly COMMAND_SETSCISSOR: NativeData;
     readonly COMMAND_COPYTEXTURE: NativeData;
+    readonly COMMAND_DELETESTORAGEBUFFER?: NativeData;
+    readonly COMMAND_COMPUTEDISPATCH?: NativeData;
 }
 
 /** @internal */

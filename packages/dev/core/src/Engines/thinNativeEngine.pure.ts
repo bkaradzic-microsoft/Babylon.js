@@ -64,8 +64,17 @@ import {
 import { checkNonFloatVertexBuffers } from "../Buffers/buffer.nonFloatVertexBuffers";
 import { type _IShaderProcessingContext } from "./Processors/shaderProcessingOptions";
 import { NativeShaderProcessingContext } from "./Native/nativeShaderProcessingContext";
-import { type ShaderLanguage } from "../Materials/shaderLanguage";
+import { ShaderLanguage } from "../Materials/shaderLanguage";
 import { type WebGLHardwareTexture } from "./WebGL/webGLHardwareTexture";
+import { type IComputeContext } from "../Compute/IComputeContext";
+import { type IComputePipelineContext } from "../Compute/IComputePipelineContext";
+import { ComputeEffect, type IComputeEffectCreationOptions, type IComputeShaderPath } from "../Compute/computeEffect";
+import {
+    ComputeBindingType,
+    type ComputeBindingList,
+    type ComputeBindingMapping,
+} from "./Extensions/engine.computeShader.pure";
+import { type UniformBuffer } from "../Materials/uniformBuffer";
 
 import { _TimeToken } from "../Instrumentation/timeToken";
 import { PerfCounter } from "../Misc/perfCounter";
@@ -122,6 +131,33 @@ class NativeDataBuffer extends DataBuffer {
      * Accessor value used to identify/retrieve a natively-stored vertex buffer.
      */
     public nativeVertexBuffer?: NativeData;
+
+    /**
+     * Accessor value used to identify/retrieve a natively-stored compute storage buffer.
+     */
+    public nativeStorageBuffer?: NativeData;
+}
+
+/** @internal Minimal compute context for the native engine (no bind groups needed). */
+class NativeComputeContext implements IComputeContext {
+    public clear(): void {}
+}
+
+/** @internal Compute pipeline context wrapping a native compute program. */
+class NativeComputePipelineContext implements IComputePipelineContext {
+    public isAsync = false;
+    public isReady = false;
+    public _name?: string;
+    public nativeProgram?: NativeProgram;
+    public computeSourceCode = "";
+
+    public _getComputeShaderCode(): Nullable<string> {
+        return this.computeSourceCode || null;
+    }
+
+    public dispose(): void {
+        this.nativeProgram = undefined;
+    }
 }
 
 /**
@@ -225,6 +261,10 @@ export class ThinNativeEngine extends ThinEngine {
     protected _engine: INativeEngine;
     private _camera: Nullable<INativeCamera>;
     private _commandBufferEncoder: CommandBufferEncoder;
+    /** @internal Cache of compiled compute effects, keyed like the WebGPU engine. */
+    public _compiledComputeEffects: { [key: string]: ComputeEffect } = {};
+    /** @internal Internal storage buffers that bridge params UniformBuffers into SSBOs for compute. */
+    private _computeUniformBridge = new WeakMap<UniformBuffer, NativeDataBuffer>();
     private _frameStats: NativeFrameStats;
     private _boundBuffersVertexArray: any;
     private _currentDepthTest: number;
@@ -361,7 +401,7 @@ export class ThinNativeEngine extends ThinEngine {
             maxMSAASamples: 16,
             canUseGLInstanceID: true,
             canUseGLVertexID: true,
-            supportComputeShaders: false,
+            supportComputeShaders: true,
             supportSRGBBuffers: true,
             supportTransformFeedbacks: false,
             textureMaxLevel: false,
@@ -2917,6 +2957,284 @@ export class ThinNativeEngine extends ThinEngine {
             this._commandBufferEncoder.finishEncodingCommand();
             delete buffer.nativeVertexBuffer;
         }
+
+        if (buffer.nativeStorageBuffer && _native.Engine.COMMAND_DELETESTORAGEBUFFER) {
+            this._commandBufferEncoder.startEncodingCommand(_native.Engine.COMMAND_DELETESTORAGEBUFFER);
+            this._commandBufferEncoder.encodeCommandArgAsNativeData(buffer.nativeStorageBuffer);
+            this._commandBufferEncoder.finishEncodingCommand();
+            delete buffer.nativeStorageBuffer;
+        }
+    }
+
+    //------------------------------------------------------------------------------
+    //                          Storage buffers (compute)
+    //------------------------------------------------------------------------------
+
+    /**
+     * Creates a storage buffer usable by compute shaders (and, when the vertex creation flag is
+     * set, also bindable as a vertex/instance stream for GPU particle rendering).
+     * @param data the data to initialize the buffer with, or its size in bytes
+     * @param creationFlags creation flags (BUFFER_CREATIONFLAG_*)
+     * @param _label optional label
+     * @returns the created storage buffer
+     */
+    public createStorageBuffer(data: DataArray | number, creationFlags: number, _label?: string): DataBuffer {
+        if (!this._engine.createStorageBuffer) {
+            throw new Error("createStorageBuffer: This native engine build does not support compute shaders!");
+        }
+
+        const view = typeof data === "number" ? undefined : ArrayBuffer.isView(data) ? data : new Float32Array(data);
+        const byteLength = typeof data === "number" ? data : view!.byteLength;
+        const asVertexBuffer = (creationFlags & Constants.BUFFER_CREATIONFLAG_VERTEX) !== 0;
+
+        const buffer = new NativeDataBuffer();
+        buffer.references = 1;
+        buffer.capacity = byteLength;
+        buffer.nativeStorageBuffer = this._engine.createStorageBuffer(byteLength, asVertexBuffer);
+
+        if (view) {
+            this._engine.updateStorageBuffer!(buffer.nativeStorageBuffer, view.buffer, view.byteOffset, view.byteLength, 0);
+        }
+
+        return buffer;
+    }
+
+    /**
+     * Updates a storage buffer
+     * @param buffer the storage buffer to update
+     * @param data the data used to update the storage buffer
+     * @param byteOffset the byte offset of the data (into the destination buffer)
+     * @param byteLength the byte length of the data
+     */
+    public updateStorageBuffer(buffer: DataBuffer, data: DataArray, byteOffset?: number, byteLength?: number): void {
+        const nb = buffer as NativeDataBuffer;
+        if (!nb.nativeStorageBuffer || !this._engine.updateStorageBuffer) {
+            return;
+        }
+
+        const view = ArrayBuffer.isView(data) ? data : new Float32Array(data);
+        const srcLength = byteLength ?? view.byteLength;
+        this._engine.updateStorageBuffer(nb.nativeStorageBuffer, view.buffer, view.byteOffset, srcLength, byteOffset ?? 0);
+    }
+
+    /**
+     * Reads bytes from a storage buffer (unsupported on native; returns zeros).
+     * @param _storageBuffer the storage buffer to read from
+     * @param _offset the byte offset to start reading from
+     * @param size the number of bytes to read
+     * @param buffer an optional destination buffer
+     * @returns a promise resolving to the read data
+     */
+    public readFromStorageBuffer(
+        _storageBuffer: DataBuffer,
+        _offset?: number,
+        size?: number,
+        buffer?: ArrayBufferView,
+        _noDelay?: boolean
+    ): Promise<ArrayBufferView> {
+        return Promise.resolve(buffer ?? new Uint8Array(size ?? 0));
+    }
+
+    /**
+     * Clears a storage buffer by writing zeros into the given range.
+     * @param storageBuffer the storage buffer to clear
+     * @param byteOffset the byte offset to start clearing from
+     * @param byteLength the number of bytes to clear
+     */
+    public clearStorageBuffer(storageBuffer: DataBuffer, byteOffset?: number, byteLength?: number): void {
+        const nb = storageBuffer as NativeDataBuffer;
+        const length = byteLength ?? nb.capacity;
+        if (!nb.nativeStorageBuffer || length <= 0) {
+            return;
+        }
+        this.updateStorageBuffer(storageBuffer, new Uint8Array(length), byteOffset ?? 0, length);
+    }
+
+    //------------------------------------------------------------------------------
+    //                              Compute shaders
+    //------------------------------------------------------------------------------
+
+    /** @internal Native compute consumes GLSL (via the shader compiler), not WGSL. */
+    public _getComputeShaderLanguage(): ShaderLanguage {
+        return ShaderLanguage.GLSL;
+    }
+
+    public override createComputeContext(): IComputeContext | undefined {
+        return new NativeComputeContext();
+    }
+
+    public override createComputeEffect(baseName: string | (IComputeShaderPath & { computeToken?: string }), options: IComputeEffectCreationOptions): ComputeEffect {
+        const compute = typeof baseName === "string" ? baseName : baseName.computeToken || baseName.computeSource || (baseName as IComputeShaderPath).compute;
+        const name = compute + "@" + options.defines;
+        if (this._compiledComputeEffects[name]) {
+            const compiledEffect = this._compiledComputeEffects[name];
+            if (options.onCompiled && compiledEffect.isReady()) {
+                options.onCompiled(compiledEffect);
+            }
+            return compiledEffect;
+        }
+        const effect = new ComputeEffect(baseName, options, this, name);
+        this._compiledComputeEffects[name] = effect;
+        return effect;
+    }
+
+    public override createComputePipelineContext(): IComputePipelineContext {
+        return new NativeComputePipelineContext();
+    }
+
+    public override areAllComputeEffectsReady(): boolean {
+        for (const key in this._compiledComputeEffects) {
+            if (!this._compiledComputeEffects[key].isReady()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public override _prepareComputePipelineContext(
+        pipelineContext: IComputePipelineContext,
+        computeSourceCode: string,
+        _rawComputeSourceCode: string,
+        defines: Nullable<string>,
+        _entryPoint: string
+    ): void {
+        const context = pipelineContext as NativeComputePipelineContext;
+        let source = computeSourceCode;
+        if (defines) {
+            source = defines + "\n" + source;
+        }
+        context.computeSourceCode = source;
+        context.nativeProgram = this._engine.createComputeProgram!(source);
+        context.isReady = true;
+    }
+
+    public override computeDispatch(
+        effect: ComputeEffect,
+        _context: IComputeContext,
+        bindings: ComputeBindingList,
+        x: number,
+        y = 1,
+        z = 1,
+        bindingsMapping?: ComputeBindingMapping
+    ): void {
+        const pipelineContext = effect._pipelineContext as Nullable<NativeComputePipelineContext>;
+        if (!pipelineContext || !pipelineContext.nativeProgram || !bindingsMapping) {
+            return;
+        }
+
+        // Flatten a {group, binding} location to a single bgfx stage. Group 0 bindings map 1:1;
+        // group 1+ bindings are offset so they never collide with group-0 stages.
+        const toStage = (group: number, binding: number): number => (group === 0 ? binding : 16 + binding);
+
+        const buffers: Array<{ stage: number; native: NativeData; access: number }> = [];
+        const textures: Array<{ stage: number; native: NativeData }> = [];
+
+        for (const key in bindings) {
+            const binding = bindings[key];
+            const location = bindingsMapping[key];
+            if (!location) {
+                continue;
+            }
+            const stage = toStage(location.group, location.binding);
+
+            switch (binding.type) {
+                case ComputeBindingType.StorageBuffer:
+                case ComputeBindingType.DataBuffer: {
+                    const dataBuffer = (binding.object.getBuffer ? binding.object.getBuffer() : binding.object) as NativeDataBuffer;
+                    if (dataBuffer?.nativeStorageBuffer) {
+                        buffers.push({ stage, native: dataBuffer.nativeStorageBuffer, access: 2 /* ReadWrite */ });
+                    }
+                    break;
+                }
+                case ComputeBindingType.UniformBuffer: {
+                    const native = this._getComputeUniformBridge(binding.object as UniformBuffer);
+                    if (native) {
+                        buffers.push({ stage, native, access: 0 /* Read */ });
+                    }
+                    break;
+                }
+                case ComputeBindingType.Texture:
+                case ComputeBindingType.TextureWithoutSampler:
+                case ComputeBindingType.InternalTexture: {
+                    const internalTexture =
+                        binding.type === ComputeBindingType.InternalTexture ? (binding.object as InternalTexture) : (binding.object as BaseTexture)._texture;
+                    const native = internalTexture?._hardwareTexture?.underlyingResource as NativeData | undefined;
+                    if (native) {
+                        textures.push({ stage, native });
+                    }
+                    break;
+                }
+            }
+        }
+
+        this._commandBufferEncoder.startEncodingCommand(_native.Engine.COMMAND_COMPUTEDISPATCH!);
+        this._commandBufferEncoder.encodeCommandArgAsNativeData(pipelineContext.nativeProgram as unknown as NativeData);
+        this._commandBufferEncoder.encodeCommandArgAsUInt32(x);
+        this._commandBufferEncoder.encodeCommandArgAsUInt32(y);
+        this._commandBufferEncoder.encodeCommandArgAsUInt32(z);
+        this._commandBufferEncoder.encodeCommandArgAsUInt32(buffers.length);
+        for (const b of buffers) {
+            this._commandBufferEncoder.encodeCommandArgAsUInt32(b.stage);
+            this._commandBufferEncoder.encodeCommandArgAsNativeData(b.native);
+            this._commandBufferEncoder.encodeCommandArgAsUInt32(b.access);
+        }
+        this._commandBufferEncoder.encodeCommandArgAsUInt32(textures.length);
+        for (const t of textures) {
+            this._commandBufferEncoder.encodeCommandArgAsUInt32(t.stage);
+            this._commandBufferEncoder.encodeCommandArgAsNativeData(t.native);
+        }
+        this._commandBufferEncoder.finishEncodingCommand();
+    }
+
+    /** @internal Lazily creates/updates an SSBO mirror of a params UniformBuffer for compute. */
+    private _getComputeUniformBridge(uniformBuffer: UniformBuffer): Nullable<NativeData> {
+        const data = (uniformBuffer as any).getData?.() as Nullable<Float32Array>;
+        if (!data || !this._engine.createStorageBuffer) {
+            return null;
+        }
+
+        let mirror = this._computeUniformBridge.get(uniformBuffer);
+        const byteLength = data.byteLength;
+        if (!mirror || mirror.capacity < byteLength) {
+            if (mirror?.nativeStorageBuffer) {
+                this._deleteBuffer(mirror);
+            }
+            mirror = new NativeDataBuffer();
+            mirror.references = 1;
+            mirror.capacity = byteLength;
+            mirror.nativeStorageBuffer = this._engine.createStorageBuffer(byteLength, false);
+            this._computeUniformBridge.set(uniformBuffer, mirror);
+        }
+
+        this._engine.updateStorageBuffer!(mirror.nativeStorageBuffer!, data.buffer, data.byteOffset, byteLength, 0);
+        return mirror.nativeStorageBuffer!;
+    }
+
+    public override releaseComputeEffects(): void {
+        for (const name in this._compiledComputeEffects) {
+            this._deleteComputePipelineContext(this._compiledComputeEffects[name].getPipelineContext() as IComputePipelineContext);
+        }
+        this._compiledComputeEffects = {};
+    }
+
+    public override _rebuildComputeEffects(): void {
+        for (const key in this._compiledComputeEffects) {
+            const effect = this._compiledComputeEffects[key];
+            effect._pipelineContext = null;
+            effect._wasPreviouslyReady = false;
+            effect._prepareEffect();
+        }
+    }
+
+    public override _releaseComputeEffect(effect: ComputeEffect): void {
+        if (this._compiledComputeEffects[effect._key]) {
+            delete this._compiledComputeEffects[effect._key];
+            this._deleteComputePipelineContext(effect.getPipelineContext() as IComputePipelineContext);
+        }
+    }
+
+    public override _deleteComputePipelineContext(pipelineContext: IComputePipelineContext): void {
+        pipelineContext?.dispose();
     }
 
     /**
