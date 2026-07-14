@@ -19,6 +19,7 @@ import {
     type InternalTextureCreationOptions,
 } from "../Materials/Textures/textureCreationOptions";
 import { type IPipelineContext } from "./IPipelineContext";
+import { type IMultiRenderTargetOptions } from "../Materials/Textures/multiRenderTarget.pure";
 import { type IColor3Like, type IColor4Like, type IViewportLike } from "../Maths/math.like";
 import { Logger } from "../Misc/logger";
 import { Constants } from "./constants";
@@ -350,7 +351,7 @@ export class ThinNativeEngine extends ThinEngine {
             textureHalfFloatRender: true,
             textureLOD: true,
             texelFetch: false,
-            drawBuffersExtension: false,
+            drawBuffersExtension: true,
             depthTextureExtension: false,
             vertexArrayObject: true,
             instancedArrays: true,
@@ -2438,6 +2439,163 @@ export class ThinNativeEngine extends ThinEngine {
         this._internalTexturesCache.push(texture);
 
         return rtWrapper;
+    }
+
+    // The Native engine renders a multi render target through a single bgfx framebuffer with several color
+    // attachments (see NativeEngine.cpp CreateMultiFrameBuffer / CreateFrameBufferImpl). Only the standard
+    // 2D-color-attachment case used by the WebGL prepass / geometry-buffer path is supported here; cube /
+    // 3D / 2D-array MRT targets and sampleable depth textures (generateDepthTexture) are not.
+    public override createMultipleRenderTarget(size: TextureSize, options: IMultiRenderTargetOptions, initializeBuffers: boolean = true): RenderTargetWrapper {
+        let generateMipMaps = false;
+        let generateDepthBuffer = true;
+        let generateStencilBuffer = false;
+        let generateDepthTexture = false;
+        let textureCount = 1;
+        let samples = 1;
+
+        const defaultType = Constants.TEXTURETYPE_UNSIGNED_BYTE;
+        const defaultSamplingMode = Constants.TEXTURE_TRILINEAR_SAMPLINGMODE;
+        const defaultFormat = Constants.TEXTUREFORMAT_RGBA;
+
+        let types: number[] = [];
+        let samplingModes: number[] = [];
+        let useSRGBBuffers: boolean[] = [];
+        let formats: number[] = [];
+        let targets: number[] = [];
+        let labels: string[] = [];
+        let dontCreateTextures = false;
+
+        const rtWrapper = this._createHardwareRenderTargetWrapper(true, false, size) as NativeRenderTargetWrapper;
+
+        if (options !== undefined) {
+            generateMipMaps = options.generateMipMaps ?? false;
+            generateDepthBuffer = options.generateDepthBuffer ?? true;
+            generateStencilBuffer = options.generateStencilBuffer ?? false;
+            generateDepthTexture = options.generateDepthTexture ?? false;
+            textureCount = options.textureCount ?? 1;
+            samples = options.samples ?? samples;
+            types = options.types || types;
+            samplingModes = options.samplingModes || samplingModes;
+            useSRGBBuffers = options.useSRGBBuffers || useSRGBBuffers;
+            formats = options.formats || formats;
+            targets = options.targetTypes || targets;
+            labels = options.labels || labels;
+            dontCreateTextures = options.dontCreateTextures ?? false;
+        }
+
+        const width = (<{ width: number; height: number }>size).width ?? <number>size;
+        const height = (<{ width: number; height: number }>size).height ?? <number>size;
+
+        const textures: InternalTexture[] = [];
+        const attachments: number[] = [];
+        const colorTextures: NativeTexture[] = [];
+
+        rtWrapper.label = options?.label ?? "MultiRenderTargetWrapper";
+        rtWrapper._generateDepthBuffer = generateDepthBuffer;
+        rtWrapper._generateStencilBuffer = generateStencilBuffer;
+        rtWrapper._attachments = attachments;
+
+        for (let i = 0; i < textureCount; i++) {
+            const samplingMode = samplingModes[i] || defaultSamplingMode;
+            const type = types[i] || defaultType;
+            const format = formats[i] || defaultFormat;
+            const useSRGBBuffer = (useSRGBBuffers[i] || false) && this._caps.supportSRGBBuffers;
+            const target = targets[i];
+
+            // Attachment index i+1 mirrors the WebGL COLOR_ATTACHMENTi convention consumers rely on.
+            attachments.push(i + 1);
+
+            if (target === -1 || dontCreateTextures) {
+                continue;
+            }
+
+            // _createInternalTexture initializes the bgfx texture as a sampleable render target and applies
+            // the float/half-float linear-filter fallbacks + cache registration, matching createRenderTargetTexture.
+            const texture = this._createInternalTexture(
+                { width, height },
+                {
+                    generateMipMaps,
+                    type,
+                    format,
+                    samplingMode,
+                    useSRGBBuffer,
+                    samples: 1,
+                    label: labels[i] ?? rtWrapper.label + "-Texture" + i,
+                },
+                true,
+                InternalTextureSource.MultiRenderTarget
+            );
+            texture._cachedWrapU = Constants.TEXTURE_CLAMP_ADDRESSMODE;
+            texture._cachedWrapV = Constants.TEXTURE_CLAMP_ADDRESSMODE;
+
+            textures[i] = texture;
+            colorTextures.push(texture._hardwareTexture!.underlyingResource);
+        }
+
+        if (generateDepthTexture && !dontCreateTextures) {
+            // The multi-framebuffer path allocates its own (non-sampleable) depth/stencil buffer; a separate
+            // sampleable depth texture attachment is not wired up on Native.
+            Logger.Warn("NativeEngine.createMultipleRenderTarget: generateDepthTexture is not supported; using a non-sampleable depth buffer.");
+        }
+
+        if (!dontCreateTextures) {
+            rtWrapper._framebuffer = this._engine.createMultiFrameBuffer(colorTextures, width, height, generateStencilBuffer, generateDepthBuffer, samples);
+        }
+
+        rtWrapper._samples = samples;
+        rtWrapper.setTextures(textures);
+
+        return rtWrapper;
+    }
+
+    public override updateMultipleRenderTargetTextureSampleCount(rtWrapper: Nullable<RenderTargetWrapper>, samples: number, _initializeBuffers: boolean = true): number {
+        // MSAA multi render target resolve is not implemented on Native (the framebuffer is created with its
+        // sample count up-front in createMultipleRenderTarget). Report the wrapper's effective sample count.
+        if (!rtWrapper) {
+            return 1;
+        }
+        return rtWrapper.samples;
+    }
+
+    public override unBindMultiColorAttachmentFramebuffer(rtWrapper: RenderTargetWrapper, _disableGenerateMipMaps: boolean = false, onBeforeUnbind?: () => void): void {
+        this._currentRenderTarget = null;
+        if (onBeforeUnbind) {
+            onBeforeUnbind();
+        }
+        this._bindUnboundFramebuffer(null);
+    }
+
+    public override bindAttachments(_attachments: number[]): void {
+        // The bound multi-attachment bgfx framebuffer already writes all of its color attachments; selecting
+        // a subset of draw buffers is not wired up on Native, so this is a no-op.
+    }
+
+    public override buildTextureLayout(textureStatus: boolean[], backBufferLayout: boolean = false): number[] {
+        const result: number[] = [];
+        if (backBufferLayout) {
+            result.push(1);
+        } else {
+            for (let i = 0; i < textureStatus.length; i++) {
+                result.push(textureStatus[i] ? i + 1 : 0);
+            }
+        }
+        return result;
+    }
+
+    public override restoreSingleAttachment(): void {
+        // No-op on Native (draw-buffer subset selection is not used).
+    }
+
+    public override restoreSingleAttachmentForRenderTarget(): void {
+        // No-op on Native (draw-buffer subset selection is not used).
+    }
+
+    public override generateMipMapsMultiFramebuffer(_texture: RenderTargetWrapper): void {
+        // bgfx auto-generates mips on render-target resolve; no explicit mipgen is issued on Native.
+    }
+
+    public override resolveMultiFramebuffer(_texture: RenderTargetWrapper): void {
+        // No MSAA multi render target resolve on Native (single-sample MRT only).
     }
 
     public override generateMipMapsForCubemap(_texture: InternalTexture, _unbind = true): void {

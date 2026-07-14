@@ -203,7 +203,12 @@ export function getNativeAddressMode(wrapMode: number): number {
         case Constants.TEXTURE_MIRROR_ADDRESSMODE:
             return _native.Engine.ADDRESS_MODE_MIRROR;
         default:
-            throw new Error("Unexpected wrap mode: " + wrapMode + ".");
+            // Match the WebGL engine, whose _getTextureWrapMode defaults any unrecognized value to REPEAT
+            // (it never throws). Babylon sometimes leaves a non-numeric wrap value on a texture's third
+            // (wrapR/W) axis, which WebGL only reads for 3D/2D-array textures and otherwise ignores; Native
+            // reads all three axes, so throwing here would crash render paths (e.g. prepass/geometry buffer)
+            // that WebGL renders fine. Default to WRAP for parity instead.
+            return _native.Engine.ADDRESS_MODE_WRAP;
     }
 }
 

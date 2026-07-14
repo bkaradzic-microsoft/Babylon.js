@@ -134,6 +134,15 @@ export interface INativeEngine {
         layer?: number
     ): NativeFramebuffer;
 
+    createMultiFrameBuffer(
+        colorTextures: NativeTexture[],
+        width: number,
+        height: number,
+        generateStencilBuffer: boolean,
+        generateDepthBuffer: boolean,
+        samples: number
+    ): NativeFramebuffer;
+
     getRenderWidth(): number;
     getRenderHeight(): number;
 
