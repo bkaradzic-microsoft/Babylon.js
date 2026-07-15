@@ -6,6 +6,8 @@ import { type Nullable, type IndicesArray, type DataArray, type FloatArray, type
 import { type VertexBuffer } from "../Buffers/buffer.pure";
 import { RegisterBufferAlign } from "../Buffers/buffer.align.pure";
 import { InternalTexture, InternalTextureSource } from "../Materials/Textures/internalTexture";
+import { type IInternalTextureLoader } from "../Materials/Textures/Loaders/internalTextureLoader";
+import { _IESTextureLoader } from "../Materials/Textures/Loaders/iesTextureLoader";
 import { type BaseTexture } from "../Materials/Textures/baseTexture.pure";
 import { type VideoTexture } from "../Materials/Textures/videoTexture.pure";
 import { type RenderTargetTexture } from "../Materials/Textures/renderTargetTexture.pure";
@@ -55,6 +57,7 @@ import {
     getNativeAttribType,
     getNativeSamplingMode,
     getNativeTextureFormat,
+    getTextureFormatComponentCount,
     getNativeStencilDepthFail,
     getNativeStencilDepthPass,
     getNativeStencilFunc,
@@ -2041,8 +2044,19 @@ export class ThinNativeEngine extends ThinEngine {
 
         // some formats are already supported by bimg, no need to try to load them with JS
         // leaving TextureLoader extension check for future use
-        let loaderPromise = null;
-        if (extension.endsWith(".basis") || extension.endsWith(".ktx") || extension.endsWith(".ktx2") || mimeType === "image/ktx" || mimeType === "image/ktx2") {
+        let loaderPromise: Nullable<Promise<IInternalTextureLoader>> = null;
+        if (extension.endsWith(".ies")) {
+            // The UMD/global build (used by Babylon Native) stubs dynamic import(), so
+            // AbstractEngine.GetCompatibleTextureLoader cannot resolve the loader module. Instantiate the
+            // statically-bundled IES loader directly instead.
+            loaderPromise = Promise.resolve(new _IESTextureLoader());
+        } else if (
+            extension.endsWith(".basis") ||
+            extension.endsWith(".ktx") ||
+            extension.endsWith(".ktx2") ||
+            mimeType === "image/ktx" ||
+            mimeType === "image/ktx2"
+        ) {
             loaderPromise = AbstractEngine.GetCompatibleTextureLoader(extension);
         }
 
@@ -2095,7 +2109,79 @@ export class ThinNativeEngine extends ThinEngine {
 
         // processing for non-image formats
         if (loaderPromise) {
-            throw new Error("Loading textures from IInternalTextureLoader not yet implemented.");
+            // These formats (e.g. .ies) are decoded on the JS side by an IInternalTextureLoader and then
+            // uploaded to the native texture as raw pixel data. bimg cannot decode them directly.
+            const texLoaderPromise = loaderPromise;
+            const callbackAsync = async (data: ArrayBufferView) => {
+                const loader = await texLoaderPromise;
+                loader.loadData(
+                    data,
+                    texture,
+                    (width: number, height: number, loadMipmap: boolean, isCompressed: boolean, done: () => void, loadFailed?: boolean) => {
+                        if (loadFailed) {
+                            onInternalError("TextureLoader failed to load data");
+                            return;
+                        }
+
+                        texture.baseWidth = width;
+                        texture.baseHeight = height;
+                        texture.width = width;
+                        texture.height = height;
+                        texture.isReady = true;
+
+                        // The loader-supplied done() performs the actual GPU upload (e.g. via
+                        // _uploadDataToTextureDirectly), so texture dimensions must be set beforehand.
+                        done();
+
+                        if (texture._hardwareTexture) {
+                            const filter = getNativeSamplingMode(samplingMode);
+                            this._setTextureSampling(texture._hardwareTexture.underlyingResource, filter);
+                        }
+
+                        if (scene) {
+                            scene.removePendingData(texture);
+                        }
+
+                        texture.onLoadedObservable.notifyObservers(texture);
+                        texture.onLoadedObservable.clear();
+                    },
+                    loaderOptions
+                );
+            };
+
+            if (buffer) {
+                const processBufferAsync = async (data: ArrayBufferView) => {
+                    try {
+                        await callbackAsync(data);
+                    } catch (reason) {
+                        onInternalError("Failed to parse texture data", reason);
+                    }
+                };
+                if (buffer instanceof ArrayBuffer) {
+                    void processBufferAsync(new Uint8Array(buffer));
+                } else if (ArrayBuffer.isView(buffer)) {
+                    void processBufferAsync(buffer);
+                } else if (onError) {
+                    onError("Unable to load: only ArrayBuffer or ArrayBufferView is supported", null);
+                }
+            } else {
+                this._loadFile(
+                    url,
+                    async (data) => {
+                        try {
+                            await callbackAsync(new Uint8Array(data as ArrayBuffer));
+                        } catch (reason) {
+                            onInternalError("Failed to parse texture data", reason);
+                        }
+                    },
+                    undefined,
+                    undefined,
+                    true,
+                    (request?: IWebRequest, exception?: any) => {
+                        onInternalError("Unable to load " + (request ? request.responseURL : url), exception);
+                    }
+                );
+            }
         } else {
             const onload = (data: ArrayBufferView) => {
                 if (!texture._hardwareTexture) {
@@ -3518,7 +3604,38 @@ export class ThinNativeEngine extends ThinEngine {
      * @internal
      */
     public override _uploadDataToTextureDirectly(texture: InternalTexture, imageData: ArrayBufferView, faceIndex: number = 0, lod: number = 0): void {
-        throw new Error("_uploadDataToTextureDirectly not implemented.");
+        if (!texture._hardwareTexture) {
+            return;
+        }
+
+        // Upload raw pixel data (e.g. the decoded IES profile: a single-channel FLOAT texture) into the
+        // native texture. Mirrors updateRawTexture; face/lod sub-uploads are not supported on Native.
+        //
+        // The caller may hand over a buffer larger than width*height texels (the IES loader decodes a full
+        // cylindrical map but only exposes its first row as a width*1 texture). WebGL's texImage2D reads
+        // exactly width*height texels and ignores the rest, whereas the native loadRawTexture strictly
+        // requires data.byteLength == width*height*bytesPerPixel. Trim the view to the expected texel count
+        // so the sizes line up.
+        const components = getTextureFormatComponentCount(texture.format);
+        const requiredElements = texture.width * texture.height * components;
+        let data: ArrayBufferView = imageData;
+        const view = imageData as unknown as { subarray?: (begin: number, end: number) => ArrayBufferView; length: number };
+        if (typeof view.subarray === "function" && view.length > requiredElements) {
+            data = view.subarray(0, requiredElements);
+        }
+
+        const underlyingResource = texture._hardwareTexture.underlyingResource;
+        this._engine.loadRawTexture(
+            underlyingResource,
+            data,
+            texture.width,
+            texture.height,
+            getNativeTextureFormat(texture.format, texture.type),
+            texture.generateMipMaps,
+            texture.invertY
+        );
+
+        texture.isReady = true;
     }
 
     /**

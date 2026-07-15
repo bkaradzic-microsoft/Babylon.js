@@ -6,6 +6,32 @@ import { VertexBuffer } from "core/Buffers/buffer.pure";
 
 declare const _native: INative;
 
+/**
+ * Returns the number of channel components for a Babylon texture format (e.g. R=1, RG=2, RGBA=4).
+ * Used to size raw pixel uploads.
+ * @param format one of the Constants.TEXTUREFORMAT_* values
+ * @returns the number of components per texel
+ */
+export function getTextureFormatComponentCount(format: number): number {
+    switch (format) {
+        case Constants.TEXTUREFORMAT_ALPHA:
+        case Constants.TEXTUREFORMAT_LUMINANCE:
+        case Constants.TEXTUREFORMAT_R:
+        case Constants.TEXTUREFORMAT_R_INTEGER:
+            return 1;
+        case Constants.TEXTUREFORMAT_LUMINANCE_ALPHA:
+        case Constants.TEXTUREFORMAT_RG:
+        case Constants.TEXTUREFORMAT_RG_INTEGER:
+            return 2;
+        case Constants.TEXTUREFORMAT_RGB:
+        case Constants.TEXTUREFORMAT_RGB_INTEGER:
+            return 3;
+        default:
+            // RGBA and everything else (safe upper bound for sizing)
+            return 4;
+    }
+}
+
 export function getNativeTextureFormat(format: number, type: number): number {
     switch (format) {
         // Depth (type is ignored)
