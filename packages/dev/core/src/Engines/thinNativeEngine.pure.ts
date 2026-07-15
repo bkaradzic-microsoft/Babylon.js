@@ -1280,6 +1280,29 @@ export class ThinNativeEngine extends ThinEngine {
         return this._colorWrite;
     }
 
+    /**
+     * Apply the currently pending engine states.
+     *
+     * The base ThinEngine.applyStates() flushes state by calling
+     * this._depthCullingState.apply(this._gl) (and similar for alpha/stencil), but the
+     * native engine has no WebGL context (_gl is undefined), so inheriting that path
+     * throws "Cannot read properties of undefined (reading 'depthMask')". Callers such
+     * as the depth-peeling (OIT) renderer mutate engine.depthCullingState directly and
+     * then call applyStates() expecting the change to be flushed, so reconcile the shared
+     * depth-culling state into the native command buffer here instead. Alpha and stencil
+     * states are already encoded immediately on the native side (setAlphaMode /
+     * setStencil* emit commands directly), so only the depth state needs reconciling.
+     */
+    public override applyStates(): void {
+        // Depth test (the native command conflates enable + compare function).
+        this._flushDepthTestState();
+
+        // Depth write (depthMask).
+        if (this._depthCullingState.depthMask !== this._depthWrite) {
+            this.setDepthWrite(this._depthCullingState.depthMask);
+        }
+    }
+
     private applyStencil(): void {
         this._setStencil(
             this._stencilMask,
