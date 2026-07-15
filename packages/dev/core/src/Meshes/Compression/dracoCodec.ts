@@ -74,6 +74,23 @@ export abstract class DracoCodec implements IDisposable {
     protected _modulePromise?: Promise<{ module: unknown /** DecoderModule | EncoderModule */ }>;
 
     /**
+     * When true, this codec is backed by a synchronous native implementation
+     * (e.g. Babylon Native's NativeDraco plugin) and no WebAssembly worker/module
+     * is set up. Subclasses that support native decoding set this via
+     * {@link _isNativeAvailable}.
+     */
+    protected _useNativeDecoder = false;
+
+    /**
+     * Returns true if a synchronous native codec is available and should be used
+     * instead of the WebAssembly/JavaScript module. Defaults to false; overridden
+     * by codecs that have a native implementation.
+     */
+    protected _isNativeAvailable(): boolean {
+        return false;
+    }
+
+    /**
      * Checks if the default codec JS module is in scope.
      */
     protected abstract _isModuleAvailable(): boolean;
@@ -96,6 +113,13 @@ export abstract class DracoCodec implements IDisposable {
      * @param configuration The configuration for the DracoCodec instance.
      */
     constructor(configuration: IDracoCodecConfiguration) {
+        // If a synchronous native codec is available (e.g. Babylon Native's NativeDraco
+        // plugin), use it and skip all WebAssembly worker/module setup entirely.
+        if (this._isNativeAvailable()) {
+            this._useNativeDecoder = true;
+            return;
+        }
+
         // check if the codec binary and worker pool was injected
         // Note - it is expected that the developer checked if WebWorker, WebAssembly and the URL object are available
         if (configuration.workerPool) {

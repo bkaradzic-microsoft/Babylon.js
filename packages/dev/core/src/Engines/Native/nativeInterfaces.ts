@@ -511,4 +511,14 @@ export interface INative {
 
     // GaussianSplatting
     sortSplats?(modelViewMatrix: Matrix, splatPositions: Float32Array, splatIndex: Float32Array, useRightHandedSystem: boolean): void;
+
+    // NativeDraco plugin — synchronous native replacement for the WASM Draco decoder.
+    decodeDracoMesh?(
+        data: Int8Array,
+        attributes?: { [kind: string]: number }
+    ): {
+        indices: Uint16Array | Uint32Array | null;
+        attributes: Array<{ kind: string; data: ArrayBufferView; size: number; byteOffset: number; byteStride: number; normalized: boolean }>;
+        totalVertices: number;
+    };
 }
