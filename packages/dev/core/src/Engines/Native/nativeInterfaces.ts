@@ -531,4 +531,13 @@ export interface INative {
         data: Int8Array;
         attributeIds: { [kind: string]: number };
     };
+
+    // NativeMeshopt plugin — synchronous native replacement for the WASM meshopt decoder.
+    decodeMeshopt?(
+        source: Uint8Array,
+        count: number,
+        stride: number,
+        mode: "ATTRIBUTES" | "TRIANGLES" | "INDICES",
+        filter?: string
+    ): Uint8Array;
 }
