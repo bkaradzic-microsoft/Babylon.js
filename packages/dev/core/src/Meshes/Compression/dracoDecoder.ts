@@ -142,7 +142,7 @@ export class DracoDecoder extends DracoCodec {
 
         // Native decode path: NativeDraco decodes synchronously and returns the same
         // { indices, attributes, totalVertices } shape as the WASM worker/module paths.
-        if (this._useNativeDecoder) {
+        if (this._useNativeCodec) {
             const result = _native.decodeDracoMesh!(dataView, attributes);
             const resultAttributes: Array<IAttributeData> = [];
             for (const attribute of result.attributes) {

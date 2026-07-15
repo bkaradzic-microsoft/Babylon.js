@@ -76,10 +76,10 @@ export abstract class DracoCodec implements IDisposable {
     /**
      * When true, this codec is backed by a synchronous native implementation
      * (e.g. Babylon Native's NativeDraco plugin) and no WebAssembly worker/module
-     * is set up. Subclasses that support native decoding set this via
+     * is set up. Subclasses that support native encoding/decoding set this via
      * {@link _isNativeAvailable}.
      */
-    protected _useNativeDecoder = false;
+    protected _useNativeCodec = false;
 
     /**
      * Returns true if a synchronous native codec is available and should be used
@@ -116,7 +116,7 @@ export abstract class DracoCodec implements IDisposable {
         // If a synchronous native codec is available (e.g. Babylon Native's NativeDraco
         // plugin), use it and skip all WebAssembly worker/module setup entirely.
         if (this._isNativeAvailable()) {
-            this._useNativeDecoder = true;
+            this._useNativeCodec = true;
             return;
         }
 

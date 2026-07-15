@@ -521,4 +521,14 @@ export interface INative {
         attributes: Array<{ kind: string; data: ArrayBufferView; size: number; byteOffset: number; byteStride: number; normalized: boolean }>;
         totalVertices: number;
     };
+
+    // NativeDraco plugin — synchronous native replacement for the WASM Draco encoder.
+    encodeDracoMesh?(
+        attributes: Array<{ kind: string; dracoName: string; size: number; data: ArrayBufferView }>,
+        indices: Uint16Array | Uint32Array | null,
+        options: { method?: string; encodeSpeed?: number; decodeSpeed?: number; quantizationBits?: { [name: string]: number } }
+    ): {
+        data: Int8Array;
+        attributeIds: { [kind: string]: number };
+    };
 }
