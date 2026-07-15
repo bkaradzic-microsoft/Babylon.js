@@ -2798,6 +2798,10 @@ export class ThinNativeEngine extends ThinEngine {
 
             // _createInternalTexture initializes the bgfx texture as a sampleable render target and applies
             // the float/half-float linear-filter fallbacks + cache registration, matching createRenderTargetTexture.
+            // The color attachments must carry the same MSAA sample count as the framebuffer's depth attachment
+            // (created with `samples` below): bgfx rejects a framebuffer that mixes single-sample color targets
+            // with a multisample depth target, which surfaced as "Failed to create frame buffer" for MSAA MRTs
+            // (e.g. the SSAO prepass). _createInternalTexture already drops mips when samples > 1.
             const texture = this._createInternalTexture(
                 { width, height },
                 {
@@ -2806,7 +2810,7 @@ export class ThinNativeEngine extends ThinEngine {
                     format,
                     samplingMode,
                     useSRGBBuffer,
-                    samples: 1,
+                    samples,
                     label: labels[i] ?? rtWrapper.label + "-Texture" + i,
                 },
                 true,
