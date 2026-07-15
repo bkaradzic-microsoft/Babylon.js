@@ -628,8 +628,10 @@ export class ThinNativeEngine extends ThinEngine {
     }
 
     public override clear(color: Nullable<IColor4Like>, backBuffer: boolean, depth: boolean, stencil: boolean = false, stencilClearValue = 0): void {
+        // Reverse depth buffer: the depth range runs far(0) -> near(1), so the buffer must be
+        // cleared to 0 and the compare function flipped to GEQUAL. Mirrors ThinEngine.clear().
         if (this.useReverseDepthBuffer) {
-            throw new Error("reverse depth buffer is not currently implemented");
+            this._depthCullingState.depthFunc = Constants.GEQUAL;
         }
 
         this._commandBufferEncoder.startEncodingCommand(_native.Engine.COMMAND_CLEAR);
@@ -639,7 +641,7 @@ export class ThinNativeEngine extends ThinEngine {
         this._commandBufferEncoder.encodeCommandArgAsFloat32(color ? color.b : 0);
         this._commandBufferEncoder.encodeCommandArgAsFloat32(color ? color.a : 1);
         this._commandBufferEncoder.encodeCommandArgAsUInt32(depth ? 1 : 0);
-        this._commandBufferEncoder.encodeCommandArgAsFloat32(1);
+        this._commandBufferEncoder.encodeCommandArgAsFloat32(this.useReverseDepthBuffer ? 0 : 1);
         this._commandBufferEncoder.encodeCommandArgAsUInt32(stencil ? 1 : 0);
         this._commandBufferEncoder.encodeCommandArgAsUInt32(stencilClearValue);
         this._commandBufferEncoder.finishEncodingCommand();
@@ -1179,6 +1181,15 @@ export class ThinNativeEngine extends ThinEngine {
         // Unlike the WebGL engine, the native engine does not call applyStates() before
         // a draw, so depth-test toggles made directly on engine.depthCullingState are
         // flushed here to match the cross-engine contract.
+        // Reconcile the depth compare function too: features that set it directly on
+        // depthCullingState (e.g. reverse depth buffer -> GEQUAL) never go through
+        // setDepthFunction, so push any divergence to the native side here. setDepthFunction
+        // also re-encodes the depth-test enable, so no separate enable flush is needed after.
+        const targetFunc = this._depthCullingState.depthFunc;
+        if (targetFunc && targetFunc !== this.getDepthFunction()) {
+            this.setDepthFunction(targetFunc);
+            return;
+        }
         if (this._depthCullingState.depthTest !== this._depthTestEnabled) {
             this._encodeDepthTest(this._depthCullingState.depthTest);
         }
@@ -1215,6 +1226,10 @@ export class ThinNativeEngine extends ThinEngine {
     }
 
     public override setDepthFunction(depthFunc: number) {
+        // Keep the shared depth-culling state in sync (the base impl sets this) so the
+        // per-draw reconcile in _flushDepthTestState treats material-driven changes as a
+        // no-op and only pushes divergences that bypass this method (e.g. reverse depth).
+        this._depthCullingState.depthFunc = depthFunc;
         let nativeDepthFunc = 0;
         switch (depthFunc) {
             case Constants.NEVER:
