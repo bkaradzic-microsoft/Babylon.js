@@ -130,7 +130,8 @@ export interface INativeEngine {
         height: number,
         buffer: Nullable<ArrayBuffer>,
         bufferOffset: number,
-        bufferLength: number
+        bufferLength: number,
+        faceIndex: number
     ): Promise<ArrayBuffer>;
 
     createImageBitmap(data: ArrayBuffer | IImage): ImageBitmap;

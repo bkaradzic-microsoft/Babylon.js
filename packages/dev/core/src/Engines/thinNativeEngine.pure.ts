@@ -3901,8 +3901,8 @@ export class ThinNativeEngine extends ThinEngine {
         x?: number,
         y?: number
     ): Promise<ArrayBufferView> {
-        if (faceIndex !== undefined && faceIndex !== -1) {
-            throw new Error(`Reading cubemap faces is not supported, but faceIndex is ${faceIndex}.`);
+        if (faceIndex !== undefined && faceIndex !== -1 && (faceIndex < 0 || faceIndex > 5)) {
+            throw new Error(`Invalid cubemap face index ${faceIndex}; expected 0-5 or -1.`);
         }
 
         return (
@@ -3916,7 +3916,8 @@ export class ThinNativeEngine extends ThinEngine {
                     height,
                     buffer?.buffer ?? null,
                     buffer?.byteOffset ?? 0,
-                    buffer?.byteLength ?? 0
+                    buffer?.byteLength ?? 0,
+                    faceIndex ?? -1
                 )
                 // eslint-disable-next-line github/no-then
                 .then((rawBuffer) => {

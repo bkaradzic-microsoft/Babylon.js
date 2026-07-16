@@ -45,6 +45,16 @@
         }
     #endif
 
+    // NUM_SAMPLES expands to a plain int literal. Native (glslang) is strict about mixing
+    // uint and int, so provide a correctly-typed sample count: uint where the sample index
+    // is a uint (WEBGL2/WEBGPU/NATIVE) and int otherwise (WebGL1). Used for both the loop
+    // bound and the hammersley() count argument.
+    #if defined(WEBGL2) || defined(WEBGPU) || defined(NATIVE)
+        #define NUM_SAMPLES_TYPED uint(NUM_SAMPLES)
+    #else
+        #define NUM_SAMPLES_TYPED NUM_SAMPLES
+    #endif
+
     float log4(float x) {
         return log2(x) / 2.;
     }
@@ -218,12 +228,12 @@
             float omegaP = (4. * PI) / (6. * dim0 * dim0);
             vec3 clampedAlbedo = clamp(surfaceAlbedo, vec3(0.1), vec3(1.0));
             #if defined(WEBGL2) || defined(WEBGPU) || defined(NATIVE)
-            for(uint i = 0u; i < NUM_SAMPLES; ++i)
+            for(uint i = 0u; i < NUM_SAMPLES_TYPED; ++i)
             #else
-            for(int i = 0; i < NUM_SAMPLES; ++i)
+            for(int i = 0; i < NUM_SAMPLES_TYPED; ++i)
             #endif
             {
-                vec2 Xi = hammersley(i, NUM_SAMPLES);
+                vec2 Xi = hammersley(i, NUM_SAMPLES_TYPED);
 
                 #if IBL_CDF_FILTERING
                     vec2 T;
@@ -322,12 +332,12 @@
 
                 float weight = 0.;
                 #if defined(WEBGL2) || defined(WEBGPU) || defined(NATIVE)
-                for(uint i = 0u; i < NUM_SAMPLES; ++i)
+                for(uint i = 0u; i < NUM_SAMPLES_TYPED; ++i)
                 #else
-                for(int i = 0; i < NUM_SAMPLES; ++i)
+                for(int i = 0; i < NUM_SAMPLES_TYPED; ++i)
                 #endif
                 {
-                    vec2 Xi = hammersley(i, NUM_SAMPLES);
+                    vec2 Xi = hammersley(i, NUM_SAMPLES_TYPED);
                     vec3 H = hemisphereImportanceSampleDggx(Xi, alphaG);
 
                     float NoV = 1.;
@@ -401,12 +411,12 @@
             float weight = 0.;
             
             #if defined(WEBGL2) || defined(WEBGPU) || defined(NATIVE)
-            for(uint i = 0u; i < NUM_SAMPLES; ++i)
+            for(uint i = 0u; i < NUM_SAMPLES_TYPED; ++i)
             #else
-            for(int i = 0; i < NUM_SAMPLES; ++i)
+            for(int i = 0; i < NUM_SAMPLES_TYPED; ++i)
             #endif
             {
-                vec2 Xi = hammersley(i, NUM_SAMPLES);
+                vec2 Xi = hammersley(i, NUM_SAMPLES_TYPED);
                 
                 // Add noise to sample coordinates to break up sampling artifacts
                 Xi = fract(Xi + noiseInput * mix(0.5f, 0.015f, noiseScale)); // Wrap around to stay in [0,1] range
