@@ -65,6 +65,7 @@ import {
     getNativeAddressMode,
 } from "./Native/nativeHelpers";
 import { checkNonFloatVertexBuffers } from "../Buffers/buffer.nonFloatVertexBuffers";
+import { FromHalfFloat, ToHalfFloat } from "../Misc/halfFloat";
 import { type _IShaderProcessingContext } from "./Processors/shaderProcessingOptions";
 import { NativeShaderProcessingContext } from "./Native/nativeShaderProcessingContext";
 import { ShaderLanguage } from "../Materials/shaderLanguage";
@@ -247,6 +248,90 @@ class CommandBufferEncoder {
 }
 
 const remappedAttributesNames: string[] = [];
+
+/**
+ * Expands a single cube face of 3-component (RGB) pixel data into 4-component (RGBA) data, mirroring the
+ * WebGL raw-cube upload. Native has no 3-component float texture format, so HDR/`.env` RGB float faces must
+ * be widened to RGBA before being uploaded through updateTextureData.
+ * @internal
+ */
+function _ConvertRgbToRgbaCubeFace(rgbData: ArrayBufferView, width: number, height: number, type: number): ArrayBufferView {
+    const count = width * height;
+    const src = rgbData as unknown as { [index: number]: number };
+    let dst: { [index: number]: number };
+    let alpha = 1;
+    if (type === Constants.TEXTURETYPE_FLOAT) {
+        dst = new Float32Array(count * 4);
+    } else if (type === Constants.TEXTURETYPE_HALF_FLOAT) {
+        dst = new Uint16Array(count * 4);
+        alpha = 15360; // encoding of 1.0 in half float
+    } else if (type === Constants.TEXTURETYPE_UNSIGNED_INTEGER) {
+        dst = new Uint32Array(count * 4);
+    } else {
+        dst = new Uint8Array(count * 4);
+    }
+
+    for (let i = 0; i < count; i++) {
+        const s = i * 3;
+        const d = i * 4;
+        dst[d + 0] = src[s + 0];
+        dst[d + 1] = src[s + 1];
+        dst[d + 2] = src[s + 2];
+        dst[d + 3] = alpha;
+    }
+
+    return dst as unknown as ArrayBufferView;
+}
+
+/**
+ * Box-downsamples a single 4-component (RGBA) mip level to the next (half-size) level, mirroring the result of
+ * gl.generateMipmap for the raw-cube path. Handles the float / half-float / integer / byte element types the
+ * cube upload may carry. Half-float samples are averaged in full precision then re-encoded.
+ * @internal
+ */
+function _DownsampleRgbaTextureData(data: ArrayBufferView, width: number, height: number, type: number): ArrayBufferView {
+    const dstWidth = Math.max(1, width >> 1);
+    const dstHeight = Math.max(1, height >> 1);
+    const isHalf = type === Constants.TEXTURETYPE_HALF_FLOAT;
+    const src = data as unknown as { [index: number]: number };
+    let dst: { [index: number]: number };
+    if (type === Constants.TEXTURETYPE_FLOAT) {
+        dst = new Float32Array(dstWidth * dstHeight * 4);
+    } else if (isHalf) {
+        dst = new Uint16Array(dstWidth * dstHeight * 4);
+    } else if (type === Constants.TEXTURETYPE_UNSIGNED_INTEGER) {
+        dst = new Uint32Array(dstWidth * dstHeight * 4);
+    } else {
+        dst = new Uint8Array(dstWidth * dstHeight * 4);
+    }
+
+    const sample = (x: number, y: number, c: number): number => {
+        const cx = x < width ? x : width - 1;
+        const cy = y < height ? y : height - 1;
+        const v = src[(cy * width + cx) * 4 + c];
+        return isHalf ? FromHalfFloat(v) : v;
+    };
+
+    for (let y = 0; y < dstHeight; y++) {
+        for (let x = 0; x < dstWidth; x++) {
+            const sx = x * 2;
+            const sy = y * 2;
+            const d = (y * dstWidth + x) * 4;
+            for (let c = 0; c < 4; c++) {
+                const avg = (sample(sx, sy, c) + sample(sx + 1, sy, c) + sample(sx, sy + 1, c) + sample(sx + 1, sy + 1, c)) / 4;
+                if (isHalf) {
+                    dst[d + c] = ToHalfFloat(avg);
+                } else if (type === Constants.TEXTURETYPE_FLOAT) {
+                    dst[d + c] = avg;
+                } else {
+                    dst[d + c] = Math.round(avg);
+                }
+            }
+        }
+    }
+
+    return dst as unknown as ArrayBufferView;
+}
 
 /** @internal */
 export class ThinNativeEngine extends ThinEngine {
@@ -1981,6 +2066,149 @@ export class ThinNativeEngine extends ThinEngine {
                 texture.invertY
             );
         }
+
+        texture.isReady = true;
+    }
+
+    /**
+     * Creates a raw cube texture on the native engine.
+     *
+     * The WebGL implementation (engine.rawTexture) drives the whole upload through `this._gl`, which is null
+     * on Native, so loading an HDR/`.env` cube via `createRawCubeTextureFromUrl` used to throw
+     * `Cannot read properties of undefined (reading 'FLOAT')`. This override allocates a native cube texture
+     * and uploads its faces through the bgfx `updateTextureData` path instead.
+     *
+     * Native has no 3-component float texture format, so an RGB float/half-float source (what HDRCubeTexture
+     * requests) is allocated and uploaded as RGBA; the per-face RGB->RGBA expansion happens in
+     * `updateRawCubeTexture`.
+     * @param data defines the data used to create the texture (6 faces, +X +Y +Z -X -Y -Z) or null
+     * @param size defines the size of the textures (each face is size x size)
+     * @param format defines the format of the data
+     * @param type defines the type of the data
+     * @param generateMipMaps defines if the engine should generate the mip levels
+     * @param invertY defines if data must be stored with Y axis inverted
+     * @param samplingMode defines the required sampling mode (like Texture.NEAREST_SAMPLINGMODE)
+     * @param compression defines the compression used (null by default)
+     * @returns the cube texture as an InternalTexture
+     */
+    public override createRawCubeTexture(
+        data: Nullable<ArrayBufferView[]>,
+        size: number,
+        format: number,
+        type: number,
+        generateMipMaps: boolean,
+        invertY: boolean,
+        samplingMode: number,
+        compression: Nullable<string> = null
+    ): InternalTexture {
+        const texture = new InternalTexture(this, InternalTextureSource.CubeRaw);
+        texture.isCube = true;
+        texture.format = format;
+        texture.type = type;
+        texture.width = size;
+        texture.height = size;
+        texture.baseWidth = size;
+        texture.baseHeight = size;
+        texture.invertY = invertY;
+        texture._compression = compression;
+
+        // Match the WebGL raw-cube path and createRenderTargetCubeTexture: float/half-float formats that the
+        // platform cannot linearly filter fall back to NEAREST and drop mip generation.
+        if (type === Constants.TEXTURETYPE_FLOAT && !this._caps.textureFloatLinearFiltering) {
+            generateMipMaps = false;
+            samplingMode = Constants.TEXTURE_NEAREST_SAMPLINGMODE;
+        } else if (type === Constants.TEXTURETYPE_HALF_FLOAT && !this._caps.textureHalfFloatLinearFiltering) {
+            generateMipMaps = false;
+            samplingMode = Constants.TEXTURE_NEAREST_SAMPLINGMODE;
+        }
+
+        texture.generateMipMaps = generateMipMaps;
+        texture.samplingMode = samplingMode;
+
+        // Native has no 3-component float cube format; always allocate an RGBA cube and expand RGB faces on upload.
+        const nativeFormat = format === Constants.TEXTUREFORMAT_RGB ? Constants.TEXTUREFORMAT_RGBA : format;
+
+        const nativeTexture = texture._hardwareTexture!.underlyingResource;
+        this._engine.initializeTexture(
+            nativeTexture,
+            size,
+            size,
+            generateMipMaps,
+            getNativeTextureFormat(nativeFormat, type),
+            /*renderTarget*/ false,
+            /*srgb*/ false,
+            /*samples*/ 1,
+            /*isCube*/ true
+        );
+        this._setTextureSampling(nativeTexture, getNativeSamplingMode(samplingMode));
+
+        if (data) {
+            this.updateRawCubeTexture(texture, data, format, type, invertY, compression);
+        } else {
+            texture.isReady = true;
+        }
+
+        this._internalTexturesCache.push(texture);
+        return texture;
+    }
+
+    /**
+     * Updates a raw cube texture on the native engine.
+     * @param texture defines the texture to update
+     * @param data defines the data to store (6 faces, +X +Y +Z -X -Y -Z)
+     * @param format defines the data format
+     * @param type defines the type of the data
+     * @param invertY defines if data must be stored with Y axis inverted
+     * @param compression defines the compression used (null by default)
+     * @param level defines which mip level of the texture to update (0 by default)
+     */
+    public override updateRawCubeTexture(
+        texture: InternalTexture,
+        data: ArrayBufferView[],
+        format: number,
+        type: number,
+        invertY: boolean,
+        compression: Nullable<string> = null,
+        level: number = 0
+    ): void {
+        texture.format = format;
+        texture.type = type;
+        texture.invertY = invertY;
+        texture._compression = compression;
+
+        const needConversion = format === Constants.TEXTUREFORMAT_RGB;
+        let width = Math.max(1, texture.width >> level);
+        let height = Math.max(1, texture.height >> level);
+
+        // Upload the supplied mip level. Data are known to be in +X +Y +Z -X -Y -Z (bgfx cube side order matches).
+        // Native has no 3-component float format, so RGB sources are widened to RGBA here; keep the widened
+        // faces so we can build the mip chain from them below (the WebGL path relies on gl.generateMipmap for
+        // this, which does not exist on Native).
+        let faces: ArrayBufferView[] = [];
+        for (let faceIndex = 0; faceIndex < 6; faceIndex++) {
+            const faceData = needConversion ? _ConvertRgbToRgbaCubeFace(data[faceIndex], width, height, type) : data[faceIndex];
+            faces.push(faceData);
+            this.updateTextureData(texture, faceData, 0, 0, width, height, faceIndex, level);
+        }
+
+        // Generate and upload the remaining mip levels by box-downsampling each face (only when a full level-0
+        // upload requested mipmaps). bgfx cannot auto-generate mips for a non-render-target texture, so the
+        // chain would otherwise stay black and roughness/IBL reflections would sample empty mips.
+        if (level === 0 && texture.generateMipMaps && needConversion) {
+            let mipLevel = 1;
+            while (width > 1 || height > 1) {
+                const nextWidth = Math.max(1, width >> 1);
+                const nextHeight = Math.max(1, height >> 1);
+                for (let faceIndex = 0; faceIndex < 6; faceIndex++) {
+                    faces[faceIndex] = _DownsampleRgbaTextureData(faces[faceIndex], width, height, type);
+                    this.updateTextureData(texture, faces[faceIndex], 0, 0, nextWidth, nextHeight, faceIndex, mipLevel);
+                }
+                width = nextWidth;
+                height = nextHeight;
+                mipLevel++;
+            }
+        }
+        faces = [];
 
         texture.isReady = true;
     }
