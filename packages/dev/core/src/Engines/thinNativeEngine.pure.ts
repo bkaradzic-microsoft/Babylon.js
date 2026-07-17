@@ -373,6 +373,9 @@ export class ThinNativeEngine extends ThinEngine {
     private _depthWrite: boolean;
     // warning for non supported fill mode has already been displayed
     private _fillModeWarningDisplayed: boolean;
+    // Reference counts + metadata for framebuffers shared across frame graph render-target wrappers
+    // (see _buildFrameGraphFramebuffer). Initialized in _initializeNativeEngine to match the other fields.
+    private _frameGraphFramebufferRefCount: Map<NativeFramebuffer, { count: number; hardwareTexture: NativeHardwareTexture; colorCount: number; hasDepth: boolean }>;
 
     public constructor(options: ThinNativeEngineOptions = {}) {
         super(null, false, undefined, options.adaptToDeviceRatio);
@@ -398,6 +401,7 @@ export class ThinNativeEngine extends ThinEngine {
         });
         this._camera = _native.Camera ? new _native.Camera() : null;
         this._commandBufferEncoder = new CommandBufferEncoder(this._engine);
+        this._frameGraphFramebufferRefCount = new Map();
         this._frameStats = { gpuTimeNs: Number.NaN };
         this._boundBuffersVertexArray = null;
         this._compiledComputeEffects = {};
@@ -2650,10 +2654,79 @@ export class ThinNativeEngine extends ThinEngine {
      */
     public _releaseFramebufferObjects(framebuffer: Nullable<NativeFramebuffer>): void {
         if (framebuffer) {
+            // Frame graph framebuffers are shared across several render-target wrappers (see
+            // _buildFrameGraphFramebuffer). Each wrapper releases its reference on dispose/reassignment, so
+            // reference-count the shared framebuffer and only delete the underlying bgfx handle once.
+            const shared = this._frameGraphFramebufferRefCount.get(framebuffer);
+            if (shared !== undefined) {
+                if (shared.count > 1) {
+                    shared.count--;
+                    return;
+                }
+                this._frameGraphFramebufferRefCount.delete(framebuffer);
+                if (shared.hardwareTexture._frameGraphFramebuffer === framebuffer) {
+                    shared.hardwareTexture._frameGraphFramebuffer = null;
+                }
+            }
             this._commandBufferEncoder.startEncodingCommand(_native.Engine.COMMAND_DELETEFRAMEBUFFER);
             this._commandBufferEncoder.encodeCommandArgAsNativeData(framebuffer);
             this._commandBufferEncoder.finishEncodingCommand();
         }
+    }
+
+    // Reference counts + metadata for framebuffers shared across frame graph render-target wrappers
+    // are stored in _frameGraphFramebufferRefCount (declared with the other engine fields).
+
+    /**
+     * Lazily builds (or reuses a shared) bgfx framebuffer for a frame graph render-target wrapper whose
+     * textures were attached after creation (dontCreateTextures). All wrappers that reference the same
+     * underlying color texture share a single framebuffer, cached on that texture's hardware wrapper, so that
+     * successive passes (clear, object render, post) accumulate into the same target instead of each fresh
+     * framebuffer/view clearing it.
+     * @internal
+     */
+    private _buildFrameGraphFramebuffer(nativeRTWrapper: NativeRenderTargetWrapper): void {
+        const textures = nativeRTWrapper.textures;
+        if (!textures || textures.length === 0) {
+            return;
+        }
+
+        const colorTextures: NativeTexture[] = [];
+        for (const texture of textures) {
+            const resource = texture?._hardwareTexture?.underlyingResource;
+            if (!resource) {
+                // A color texture is not yet backed by a hardware texture; leave the wrapper unbuilt (the base
+                // path will bind the back buffer). This wrapper will be retried on its next bind.
+                return;
+            }
+            colorTextures.push(resource);
+        }
+
+        const hardwareTexture = textures[0]._hardwareTexture as NativeHardwareTexture;
+        const depthStencilTexture = nativeRTWrapper._depthStencilTexture;
+        const generateDepthBuffer = !!depthStencilTexture || nativeRTWrapper._generateDepthBuffer;
+        const generateStencilBuffer = nativeRTWrapper._generateStencilBuffer;
+        const samples = textures[0].samples || nativeRTWrapper.samples || 1;
+
+        const cached = hardwareTexture._frameGraphFramebuffer;
+        const cachedMeta = cached ? this._frameGraphFramebufferRefCount.get(cached) : undefined;
+
+        // Reuse the cached framebuffer when it is compatible: same color-attachment count, and it has a depth
+        // buffer when this pass needs one (a pass that does not need depth can safely reuse a depth framebuffer).
+        if (cached && cachedMeta && cachedMeta.colorCount === colorTextures.length && (cachedMeta.hasDepth || !generateDepthBuffer)) {
+            cachedMeta.count++;
+            nativeRTWrapper._framebuffer = cached;
+            return;
+        }
+
+        const framebuffer =
+            colorTextures.length === 1
+                ? this._engine.createFrameBuffer(colorTextures[0], nativeRTWrapper.width, nativeRTWrapper.height, generateStencilBuffer, generateDepthBuffer, samples)
+                : this._engine.createMultiFrameBuffer(colorTextures, nativeRTWrapper.width, nativeRTWrapper.height, generateStencilBuffer, generateDepthBuffer, samples);
+
+        this._frameGraphFramebufferRefCount.set(framebuffer, { count: 1, hardwareTexture, colorCount: colorTextures.length, hasDepth: generateDepthBuffer });
+        hardwareTexture._frameGraphFramebuffer = framebuffer;
+        nativeRTWrapper._framebuffer = framebuffer;
     }
 
     /**
@@ -3239,6 +3312,16 @@ export class ThinNativeEngine extends ThinEngine {
 
         if (requiredWidth || requiredHeight) {
             throw new Error("Required width/height for frame buffers not yet supported in NativeEngine.");
+        }
+
+        // Frame graph render targets are created via createMultipleRenderTarget({ dontCreateTextures: true }),
+        // so no bgfx framebuffer is built up-front; the externally-allocated color/depth textures are attached
+        // afterwards via setTexture/setDepthStencilTexture. Lazily build a framebuffer from those textures the
+        // first time the wrapper is bound. Several wrappers can reference the same underlying texture(s), so the
+        // framebuffer is cached on (and shared through) the first color texture's hardware wrapper to avoid each
+        // fresh framebuffer/view clearing the texture and clobbering earlier passes.
+        if (!nativeRTWrapper._framebuffers && !nativeRTWrapper._framebufferDepthStencil && !nativeRTWrapper._framebuffer) {
+            this._buildFrameGraphFramebuffer(nativeRTWrapper);
         }
 
         if (nativeRTWrapper._framebuffers) {
