@@ -541,7 +541,7 @@ export class ThinNativeEngine extends ThinEngine {
             needShaderCodeInlining: true,
             needToAlwaysBindUniformBuffers: false,
             supportRenderPasses: true,
-            supportSpriteInstancing: false,
+            supportSpriteInstancing: true,
             forceVertexBufferStrideAndOffsetMultiple4Bytes: true,
             _checkNonFloatVertexBuffersDontRecreatePipelineContext: false,
         };
