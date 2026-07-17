@@ -107,6 +107,16 @@ export interface INativeEngine {
         generateMipMaps: boolean,
         invertY: boolean
     ): void;
+    loadRawTexture3D(
+        texture: NativeTexture,
+        data: Nullable<ArrayBufferView>,
+        width: number,
+        height: number,
+        depth: number,
+        format: number,
+        generateMipMaps: boolean,
+        invertY: boolean
+    ): void;
     loadCubeTexture(
         texture: NativeTexture,
         data: Array<ArrayBufferView>,

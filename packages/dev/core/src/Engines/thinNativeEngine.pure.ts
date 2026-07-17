@@ -2045,6 +2045,75 @@ export class ThinNativeEngine extends ThinEngine {
         return texture;
     }
 
+    public override createRawTexture3D(
+        data: Nullable<ArrayBufferView>,
+        width: number,
+        height: number,
+        depth: number,
+        format: number,
+        generateMipMaps: boolean,
+        invertY: boolean,
+        samplingMode: number,
+        compression: Nullable<string> = null,
+        textureType = Constants.TEXTURETYPE_UNSIGNED_BYTE
+    ): InternalTexture {
+        const texture = new InternalTexture(this, InternalTextureSource.Raw3D);
+
+        texture.baseWidth = width;
+        texture.baseHeight = height;
+        texture.baseDepth = depth;
+        texture.width = width;
+        texture.height = height;
+        texture.depth = depth;
+        texture.format = format;
+        texture.type = textureType;
+        texture.generateMipMaps = generateMipMaps;
+        texture.samplingMode = samplingMode;
+        texture.is3D = true;
+
+        if (texture._hardwareTexture) {
+            const nativeTexture = texture._hardwareTexture.underlyingResource;
+            this._engine.loadRawTexture3D(nativeTexture, data, width, height, depth, getNativeTextureFormat(format, textureType), generateMipMaps, invertY);
+
+            const filter = getNativeSamplingMode(samplingMode);
+            this._setTextureSampling(nativeTexture, filter);
+        }
+
+        texture.isReady = true;
+
+        this._internalTexturesCache.push(texture);
+        return texture;
+    }
+
+    public override updateRawTexture3D(
+        texture: Nullable<InternalTexture>,
+        bufferView: Nullable<ArrayBufferView>,
+        format: number,
+        invertY: boolean,
+        compression: Nullable<string> = null,
+        textureType: number = Constants.TEXTURETYPE_UNSIGNED_BYTE
+    ): void {
+        if (!texture) {
+            return;
+        }
+
+        if (bufferView && texture._hardwareTexture) {
+            const nativeTexture = texture._hardwareTexture.underlyingResource;
+            this._engine.loadRawTexture3D(
+                nativeTexture,
+                bufferView,
+                texture.width,
+                texture.height,
+                texture.depth,
+                getNativeTextureFormat(format, textureType),
+                texture.generateMipMaps,
+                invertY
+            );
+        }
+
+        texture.isReady = true;
+    }
+
     public override updateRawTexture(
         texture: Nullable<InternalTexture>,
         bufferView: Nullable<ArrayBufferView>,
