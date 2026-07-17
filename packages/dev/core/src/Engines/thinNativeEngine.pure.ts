@@ -2979,10 +2979,18 @@ export class ThinNativeEngine extends ThinEngine {
             samples = options.samples ?? 1;
         }
 
+        const width = (<{ width: number; height: number; layers?: number; depth?: number }>size).width ?? <number>size;
+        const height = (<{ width: number; height: number; layers?: number; depth?: number }>size).height ?? <number>size;
+        const layers = (<{ width: number; height: number; layers?: number; depth?: number }>size).layers || 0;
+        const depth = (<{ width: number; height: number; layers?: number; depth?: number }>size).depth || 0;
+
+        // 3D render target (IBL voxel grid + its procedural mip chain): create a real volume texture and
+        // render to each Z-slice / mip through its own lazily-built framebuffer (see _get3DLayerFramebuffer).
+        if (depth > 0 && !noColorAttachment && !colorAttachment) {
+            return this._createRenderTargetTexture3D(rtWrapper, options, width, height, depth, generateDepthBuffer, generateStencilBuffer, samples);
+        }
+
         const texture = colorAttachment || (noColorAttachment ? null : this._createInternalTexture(size, options, true, InternalTextureSource.RenderTarget));
-        const width = (<{ width: number; height: number; layers?: number }>size).width ?? <number>size;
-        const height = (<{ width: number; height: number; layers?: number }>size).height ?? <number>size;
-        const layers = (<{ width: number; height: number; layers?: number }>size).layers || 0;
 
         if (layers > 0 && texture) {
             // 2D texture array render target (e.g. cascaded shadow maps): the native engine renders each
@@ -3017,6 +3025,78 @@ export class ThinNativeEngine extends ThinEngine {
         rtWrapper._samples = samples;
 
         rtWrapper.setTextures(texture);
+
+        return rtWrapper;
+    }
+
+    // Builds a 3D (volume) render-target texture. bgfx renders to individual Z-slices/mips through per-slice
+    // framebuffers created on demand in _get3DLayerFramebuffer; the volume is sampled as a sampler3D.
+    private _createRenderTargetTexture3D(
+        rtWrapper: NativeRenderTargetWrapper,
+        options: boolean | RenderTargetCreationOptions,
+        width: number,
+        height: number,
+        depth: number,
+        generateDepthBuffer: boolean,
+        generateStencilBuffer: boolean,
+        samples: number
+    ): RenderTargetWrapper {
+        let generateMipMaps = false;
+        let type = Constants.TEXTURETYPE_UNSIGNED_BYTE;
+        let samplingMode = Constants.TEXTURE_TRILINEAR_SAMPLINGMODE;
+        let format = Constants.TEXTUREFORMAT_RGBA;
+        let label: string | undefined;
+        if (options !== undefined && typeof options === "object") {
+            generateMipMaps = !!options.generateMipMaps;
+            type = options.type ?? Constants.TEXTURETYPE_UNSIGNED_BYTE;
+            samplingMode = options.samplingMode ?? Constants.TEXTURE_TRILINEAR_SAMPLINGMODE;
+            format = options.format ?? Constants.TEXTUREFORMAT_RGBA;
+            label = options.label;
+        }
+
+        // Match _createInternalTexture: float/half-float RTTs that the platform can't linearly filter fall
+        // back to NEAREST, and unsupported float types drop to unsigned byte.
+        if (type === Constants.TEXTURETYPE_FLOAT && !this._caps.textureFloatLinearFiltering) {
+            samplingMode = Constants.TEXTURE_NEAREST_SAMPLINGMODE;
+        } else if (type === Constants.TEXTURETYPE_HALF_FLOAT && !this._caps.textureHalfFloatLinearFiltering) {
+            samplingMode = Constants.TEXTURE_NEAREST_SAMPLINGMODE;
+        }
+        if (type === Constants.TEXTURETYPE_FLOAT && !this._caps.textureFloat) {
+            type = Constants.TEXTURETYPE_UNSIGNED_BYTE;
+            Logger.Warn("Float textures are not supported. Type forced to TEXTURETYPE_UNSIGNED_BYTE");
+        }
+
+        const texture = new InternalTexture(this, InternalTextureSource.RenderTarget);
+        texture.is3D = true;
+        texture.baseWidth = width;
+        texture.baseHeight = height;
+        texture.width = width;
+        texture.height = height;
+        texture.baseDepth = depth;
+        texture.depth = depth;
+        texture.isReady = true;
+        texture.samples = samples;
+        texture.generateMipMaps = generateMipMaps;
+        texture.samplingMode = samplingMode;
+        texture.type = type;
+        texture.format = format;
+        texture.label = label;
+
+        const nativeTexture = texture._hardwareTexture!.underlyingResource;
+        const nativeTextureFormat = getNativeTextureFormat(format, type);
+        // See the createRenderTargetTexture MSAA/mips note: avoid the mips + samples combo on bgfx.
+        const hasMips = samples > 1 ? false : generateMipMaps;
+        this._engine.initializeTexture(nativeTexture, width, height, hasMips, nativeTextureFormat, /*renderTarget*/ true, /*srgb*/ false, samples, /*isCube*/ false, /*numLayers(depth)*/ depth, /*is3D*/ true);
+        this._setTextureSampling(nativeTexture, getNativeSamplingMode(samplingMode));
+
+        rtWrapper._generateDepthBuffer = generateDepthBuffer;
+        rtWrapper._generateStencilBuffer = generateStencilBuffer;
+        rtWrapper._samples = samples;
+        rtWrapper.setTextures(texture);
+
+        // Track the hand-built 3D RTT texture the same way _createInternalTexture tracks 2D textures so it
+        // participates in engine-wide lifecycle management (dispose iteration, context rebuild, stats).
+        this._internalTexturesCache.push(texture);
 
         return rtWrapper;
     }
@@ -3143,6 +3223,12 @@ export class ThinNativeEngine extends ThinEngine {
         const width = (<{ width: number; height: number }>size).width ?? <number>size;
         const height = (<{ width: number; height: number }>size).height ?? <number>size;
 
+        // MRT whose color attachments are distinct layers of one shared 3D texture (IBL voxelization: N draw
+        // buffers → N Z-slices of the voxel grid). The shared texture is assigned later via setInternalTexture,
+        // so the layered multi-attachment framebuffer is (re)built lazily on first bind (_bindLayered3DMultiFramebuffer).
+        const layerIndex: number[] | undefined = (options as unknown as { layerIndex?: number[] })?.layerIndex;
+        const is3DLayeredMRT = targets.some((t) => t === Constants.TEXTURE_3D);
+
         const textures: InternalTexture[] = [];
         const attachments: number[] = [];
         const colorTextures: NativeTexture[] = [];
@@ -3199,7 +3285,11 @@ export class ThinNativeEngine extends ThinEngine {
             Logger.Warn("NativeEngine.createMultipleRenderTarget: generateDepthTexture is not supported; using a non-sampleable depth buffer.");
         }
 
-        if (!dontCreateTextures) {
+        if (layerIndex) {
+            rtWrapper.setLayerAndFaceIndices(layerIndex, (options as unknown as { faceIndex?: number[] })?.faceIndex ?? []);
+        }
+
+        if (!dontCreateTextures && !is3DLayeredMRT) {
             rtWrapper._framebuffer = this._engine.createMultiFrameBuffer(colorTextures, width, height, generateStencilBuffer, generateDepthBuffer, samples);
         }
 
@@ -3370,7 +3460,15 @@ export class ThinNativeEngine extends ThinEngine {
         texture.samplingMode = samplingMode;
     }
 
-    public override bindFramebuffer(texture: RenderTargetWrapper, faceIndex?: number, requiredWidth?: number, requiredHeight?: number, forceFullscreenViewport?: boolean): void {
+    public override bindFramebuffer(
+        texture: RenderTargetWrapper,
+        faceIndex?: number,
+        requiredWidth?: number,
+        requiredHeight?: number,
+        forceFullscreenViewport?: boolean,
+        lodLevel?: number,
+        layer?: number
+    ): void {
         const nativeRTWrapper = texture as NativeRenderTargetWrapper;
 
         if (this._currentRenderTarget) {
@@ -3378,6 +3476,23 @@ export class ThinNativeEngine extends ThinEngine {
         }
 
         this._currentRenderTarget = texture;
+
+        // Multi render target that writes into several layers of a single 3D texture (the IBL voxelization
+        // MRTs: 8 draw buffers, each targeting a Z-slice of the shared voxel grid). The color textures are
+        // swapped in via setInternalTexture after creation, so (re)build the layered multi-attachment
+        // framebuffer here from the current textures + their layer indices.
+        if (nativeRTWrapper.isMulti && nativeRTWrapper.is3D) {
+            this._bindLayered3DMultiFramebuffer(nativeRTWrapper);
+            return;
+        }
+
+        // Single 3D render target (IBL voxel grid + its procedural mip chain): render to the requested
+        // (mip, layer) through a lazily-built, cached per-slice framebuffer. requiredWidth/Height carry the
+        // mip dimensions for the voxel mip-copy pass (forceFullscreenViewport is always set by that caller).
+        if (nativeRTWrapper.is3D) {
+            this._bindUnboundFramebuffer(this._get3DLayerFramebuffer(nativeRTWrapper, lodLevel ?? 0, layer ?? 0, requiredWidth, requiredHeight));
+            return;
+        }
 
         if (requiredWidth || requiredHeight) {
             throw new Error("Required width/height for frame buffers not yet supported in NativeEngine.");
@@ -3403,6 +3518,67 @@ export class ThinNativeEngine extends ThinEngine {
         } else {
             this._bindUnboundFramebuffer(nativeRTWrapper._framebuffer);
         }
+    }
+
+    // Returns (building + caching on first use) the bgfx framebuffer that targets a single (mip, layer)
+    // slice of a 3D render-target texture. Used by the IBL voxel grid + procedural mip chain, whose
+    // ProceduralTexture / mip-copy passes render one Z-slice at a time via bindFramebuffer(lodLevel, layer).
+    private _get3DLayerFramebuffer(nativeRTWrapper: NativeRenderTargetWrapper, mip: number, layer: number, requiredWidth?: number, requiredHeight?: number): NativeFramebuffer {
+        if (!nativeRTWrapper._layerFramebuffers) {
+            nativeRTWrapper._layerFramebuffers = new Map<number, NativeFramebuffer>();
+        }
+        const key = mip * nativeRTWrapper.depth + layer;
+        let framebuffer = nativeRTWrapper._layerFramebuffers.get(key);
+        if (!framebuffer) {
+            const nativeTexture = nativeRTWrapper.texture!._hardwareTexture!.underlyingResource;
+            const width = requiredWidth || Math.max(1, nativeRTWrapper.width >> mip);
+            const height = requiredHeight || Math.max(1, nativeRTWrapper.height >> mip);
+            framebuffer = this._engine.createFrameBuffer(
+                nativeTexture,
+                width,
+                height,
+                nativeRTWrapper._generateStencilBuffer,
+                nativeRTWrapper._generateDepthBuffer,
+                nativeRTWrapper.samples,
+                layer,
+                mip
+            );
+            nativeRTWrapper._layerFramebuffers.set(key, framebuffer);
+        }
+        return framebuffer;
+    }
+
+    // (Re)builds and binds the multi-attachment framebuffer for an MRT whose color attachments are distinct
+    // layers of one shared 3D texture (IBL voxelization: 8 draw buffers → 8 Z-slices of the voxel grid). The
+    // shared texture is assigned via setInternalTexture after createMultipleRenderTarget, so the framebuffer is
+    // built lazily here and rebuilt if the underlying texture changes.
+    private _bindLayered3DMultiFramebuffer(nativeRTWrapper: NativeRenderTargetWrapper): void {
+        const textures = nativeRTWrapper.textures;
+        const primaryTexture = textures && textures.length > 0 ? textures[0] : nativeRTWrapper.texture;
+        if (!nativeRTWrapper._framebuffer || nativeRTWrapper._layered3DFramebufferTexture !== primaryTexture) {
+            const colorTextures: NativeTexture[] = [];
+            const layers: number[] = [];
+            const layerIndices = nativeRTWrapper.layerIndices;
+            for (let i = 0; i < (textures?.length ?? 0); i++) {
+                const nativeTexture = textures![i]?._hardwareTexture?.underlyingResource;
+                if (!nativeTexture) {
+                    continue;
+                }
+                colorTextures.push(nativeTexture);
+                layers.push(layerIndices?.[i] ?? i);
+            }
+            nativeRTWrapper._framebuffer = this._engine.createMultiFrameBuffer(
+                colorTextures,
+                nativeRTWrapper.width,
+                nativeRTWrapper.height,
+                nativeRTWrapper._generateStencilBuffer,
+                nativeRTWrapper._generateDepthBuffer,
+                nativeRTWrapper.samples,
+                layers
+            );
+            nativeRTWrapper._layered3DFramebufferTexture = primaryTexture;
+        }
+        this._bindUnboundFramebuffer(nativeRTWrapper._framebuffer);
     }
 
     public override unBindFramebuffer(texture: RenderTargetWrapper, disableGenerateMipMaps = false, onBeforeUnbind?: () => void): void {

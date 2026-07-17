@@ -82,7 +82,8 @@ export interface INativeEngine {
         srgb: boolean,
         samples: number,
         isCube?: boolean,
-        numLayers?: number
+        numLayers?: number,
+        is3D?: boolean
     ): void;
     loadTexture(texture: NativeTexture, data: ArrayBufferView, generateMips: boolean, invertY: boolean, srgb: boolean, onSuccess: () => void, onError: () => void): void;
     loadRawTexture(texture: NativeTexture, data: ArrayBufferView, width: number, height: number, format: number, generateMips: boolean, invertY: boolean): void;
@@ -154,7 +155,8 @@ export interface INativeEngine {
         generateStencilBuffer: boolean,
         generateDepthBuffer: boolean,
         samples: number,
-        layer?: number
+        layer?: number,
+        mip?: number
     ): NativeFramebuffer;
 
     createMultiFrameBuffer(
@@ -163,7 +165,8 @@ export interface INativeEngine {
         height: number,
         generateStencilBuffer: boolean,
         generateDepthBuffer: boolean,
-        samples: number
+        samples: number,
+        layers?: number[]
     ): NativeFramebuffer;
 
     getRenderWidth(): number;

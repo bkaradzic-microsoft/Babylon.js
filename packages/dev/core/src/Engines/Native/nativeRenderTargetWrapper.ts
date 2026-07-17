@@ -15,6 +15,16 @@ export class NativeRenderTargetWrapper extends RenderTargetWrapper {
     // eslint-disable-next-line @typescript-eslint/naming-convention
     private __framebuffers: Nullable<NativeFramebuffer[]> = null;
 
+    // Lazily-built per-(mip, layer) framebuffers for 3D render targets (IBL voxel grid + its
+    // procedural mip chain). Keyed by `mip * depth + layer`; each slice/mip is rendered through
+    // its own bgfx framebuffer selected by bindFramebuffer(lodLevel, layer).
+    // eslint-disable-next-line @typescript-eslint/naming-convention
+    public _layerFramebuffers: Nullable<Map<number, NativeFramebuffer>> = null;
+    // The 3D texture the multi-attachment (layered MRT) framebuffer was last built from, so it can be
+    // rebuilt when setInternalTexture swaps in the shared voxel texture after creation.
+    // eslint-disable-next-line @typescript-eslint/naming-convention
+    public _layered3DFramebufferTexture: unknown = undefined;
+
     public get _framebuffer(): Nullable<NativeFramebuffer> {
         return this.__framebuffer;
     }
@@ -58,6 +68,14 @@ export class NativeRenderTargetWrapper extends RenderTargetWrapper {
     }
 
     public override dispose(disposeOnlyFramebuffers = false): void {
+        if (this._layerFramebuffers) {
+            for (const framebuffer of this._layerFramebuffers.values()) {
+                this._engine._releaseFramebufferObjects(framebuffer);
+            }
+            this._layerFramebuffers = null;
+        }
+        this._layered3DFramebufferTexture = undefined;
+
         if (this.__framebuffers) {
             // Releases all six per-face framebuffers (face 0 is aliased by __framebuffer, so
             // clear that alias here without releasing it again).
