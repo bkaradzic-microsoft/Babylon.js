@@ -166,7 +166,8 @@ export interface INativeEngine {
         generateStencilBuffer: boolean,
         generateDepthBuffer: boolean,
         samples: number,
-        layers?: number[]
+        layers?: number[],
+        explicitDepthTexture?: NativeTexture
     ): NativeFramebuffer;
 
     getRenderWidth(): number;
