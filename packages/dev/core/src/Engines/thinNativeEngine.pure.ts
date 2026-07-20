@@ -3059,6 +3059,17 @@ export class ThinNativeEngine extends ThinEngine {
             Logger.Warn("Float textures are not supported. Type forced to TEXTURETYPE_UNSIGNED_BYTE");
         }
 
+        // A cube render-target attachment routed through _createInternalTexture (e.g. a frame-graph MRT cube
+        // target: the texture manager creates each attachment via _createInternalTexture and sets isCube for a
+        // TEXTURE_CUBE_MAP target) must be created as a real bgfx cube texture. This path otherwise only
+        // produces 2D / 2D-array textures (isCube was silently dropped), so a samplerCube read it back as a
+        // plain 2D texture and the cube attachment rendered/sampled wrong. Delegate to the cube path so its
+        // per-face layers (layer*6+face) are addressable.
+        if (typeof options === "object" && options.isCube) {
+            const cubeSize = (<{ width: number }>size).width ?? <number>size;
+            return this._createInternalCubeTexture(cubeSize, options, source);
+        }
+
         const texture = new InternalTexture(this, source);
         const width = (<{ width: number; height: number; layers?: number }>size).width ?? <number>size;
         const height = (<{ width: number; height: number; layers?: number }>size).height ?? <number>size;
@@ -3691,7 +3702,7 @@ export class ThinNativeEngine extends ThinEngine {
         // (2D-array layer / cube face / 2D attachments, routed via _isMixedTypeMRT). The color textures may be
         // swapped in via setInternalTexture after creation, so (re)build the layered multi-attachment
         // framebuffer here from the current textures + their per-attachment layer/face indices.
-        if (nativeRTWrapper.isMulti && (nativeRTWrapper.is3D || nativeRTWrapper._isMixedTypeMRT)) {
+        if (nativeRTWrapper.isMulti && (nativeRTWrapper.is3D || nativeRTWrapper._isMixedTypeMRT || this._isLayeredFrameGraphMRT(nativeRTWrapper))) {
             this._bindLayeredMultiFramebuffer(nativeRTWrapper);
             return;
         }
@@ -3756,6 +3767,42 @@ export class ThinNativeEngine extends ThinEngine {
             nativeRTWrapper._layerFramebuffers.set(key, framebuffer);
         }
         return framebuffer;
+    }
+
+    // A frame-graph multi-render-target wrapper is created via createMultipleRenderTarget({dontCreateTextures:
+    // true}) WITHOUT targetTypes/layerIndex/faceIndex, so it is never flagged _isMixedTypeMRT at creation: its
+    // color textures (setTexture) and per-attachment layer/face indices (setLayerAndFaceIndex, from the render
+    // pass's setOutputLayerAndFaceIndices) are assigned afterwards. Detect the layered case at bind time so it
+    // routes through _bindLayeredMultiFramebuffer (which renders each draw buffer into the correct 2D-array
+    // layer / cube face) instead of the flat _buildFrameGraphFramebuffer (which would bind layer 0 of every
+    // attachment and duplicate a shared array/cube resource, leaving the extra targets unwritten).
+    private _isLayeredFrameGraphMRT(wrapper: NativeRenderTargetWrapper): boolean {
+        const textures = wrapper.textures;
+        if (!textures || textures.length === 0) {
+            return false;
+        }
+        for (const tex of textures) {
+            if (tex && (tex.isCube || tex.is2DArray || tex.is3D)) {
+                return true;
+            }
+        }
+        const faceIndices = wrapper.faceIndices;
+        if (faceIndices) {
+            for (const face of faceIndices) {
+                if (face) {
+                    return true;
+                }
+            }
+        }
+        const layerIndices = wrapper.layerIndices;
+        if (layerIndices) {
+            for (const layer of layerIndices) {
+                if (layer) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     // (Re)builds and binds the multi-attachment framebuffer for a layered MRT: either an IBL voxelization MRT
