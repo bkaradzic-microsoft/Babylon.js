@@ -3106,6 +3106,54 @@ export class ThinNativeEngine extends ThinEngine {
         return texture;
     }
 
+    // Creates a standalone, sampleable cube InternalTexture usable as a mixed-type MRT color attachment (a
+    // single face is targeted per attachment via the framebuffer's per-attachment layer). Mirrors
+    // _createInternalTexture's float/half-float linear-filter fallbacks + cache registration, but initializes
+    // the bgfx texture as a cube render target (there is no cube path through _createInternalTexture, which
+    // only produces 2D / 2D-array textures).
+    private _createInternalCubeTexture(size: number, options: InternalTextureCreationOptions, source: InternalTextureSource): InternalTexture {
+        let type = options.type ?? Constants.TEXTURETYPE_UNSIGNED_BYTE;
+        let samplingMode = options.samplingMode ?? Constants.TEXTURE_TRILINEAR_SAMPLINGMODE;
+        const format = options.format ?? Constants.TEXTUREFORMAT_RGBA;
+        const generateMipMaps = !!options.generateMipMaps;
+        const samples = options.samples ?? 1;
+
+        if (type === Constants.TEXTURETYPE_FLOAT && !this._caps.textureFloatLinearFiltering) {
+            samplingMode = Constants.TEXTURE_NEAREST_SAMPLINGMODE;
+        } else if (type === Constants.TEXTURETYPE_HALF_FLOAT && !this._caps.textureHalfFloatLinearFiltering) {
+            samplingMode = Constants.TEXTURE_NEAREST_SAMPLINGMODE;
+        }
+        if (type === Constants.TEXTURETYPE_FLOAT && !this._caps.textureFloat) {
+            type = Constants.TEXTURETYPE_UNSIGNED_BYTE;
+            Logger.Warn("Float textures are not supported. Type forced to TEXTURETYPE_UNSIGNED_BYTE");
+        }
+
+        const texture = new InternalTexture(this, source);
+        texture.isCube = true;
+        texture.baseWidth = size;
+        texture.baseHeight = size;
+        texture.width = size;
+        texture.height = size;
+        texture.isReady = true;
+        texture.samples = samples;
+        texture.generateMipMaps = generateMipMaps;
+        texture.samplingMode = samplingMode;
+        texture.type = type;
+        texture.format = format;
+        texture.label = options.label;
+
+        const nativeTexture = texture._hardwareTexture!.underlyingResource;
+        const nativeTextureFormat = getNativeTextureFormat(format, type);
+        // See the createRenderTargetTexture MSAA/mips note: avoid the mips + samples combo on bgfx.
+        const hasMips = samples > 1 ? false : generateMipMaps;
+        this._engine.initializeTexture(nativeTexture, size, size, hasMips, nativeTextureFormat, /*renderTarget*/ true, /*srgb*/ false, samples, /*isCube*/ true);
+        this._setTextureSampling(nativeTexture, getNativeSamplingMode(samplingMode));
+
+        this._internalTexturesCache.push(texture);
+
+        return texture;
+    }
+
     public override createRenderTargetTexture(
         size: number | { width: number; height: number; depth: number },
         options: boolean | RenderTargetCreationOptions
@@ -3371,9 +3419,17 @@ export class ThinNativeEngine extends ThinEngine {
 
         // MRT whose color attachments are distinct layers of one shared 3D texture (IBL voxelization: N draw
         // buffers → N Z-slices of the voxel grid). The shared texture is assigned later via setInternalTexture,
-        // so the layered multi-attachment framebuffer is (re)built lazily on first bind (_bindLayered3DMultiFramebuffer).
+        // so the layered multi-attachment framebuffer is (re)built lazily on first bind (_bindLayeredMultiFramebuffer).
         const layerIndex: number[] | undefined = (options as unknown as { layerIndex?: number[] })?.layerIndex;
+        const faceIndex: number[] | undefined = (options as unknown as { faceIndex?: number[] })?.faceIndex;
+        const layerCounts: number[] | undefined = (options as unknown as { layerCounts?: number[] })?.layerCounts;
         const is3DLayeredMRT = targets.some((t) => t === Constants.TEXTURE_3D);
+        // A mixed-type MRT renders each color attachment into a specific layer of a 2D-array texture or a
+        // specific face of a cube texture (alongside plain 2D targets). Detect it so each color texture is
+        // created with the correct dimensionality and the multi-attachment framebuffer is built lazily with
+        // per-attachment layer/face (setInternalTexture may swap a shared texture in after creation, e.g. the
+        // MRT that renders two different layers of one 2D-array via a -1 target + setInternalTexture).
+        const isLayeredMRT = is3DLayeredMRT || targets.some((t) => t === Constants.TEXTURE_2D_ARRAY || t === Constants.TEXTURE_CUBE_MAP);
 
         const textures: InternalTexture[] = [];
         const attachments: number[] = [];
@@ -3404,20 +3460,20 @@ export class ThinNativeEngine extends ThinEngine {
             // (created with `samples` below): bgfx rejects a framebuffer that mixes single-sample color targets
             // with a multisample depth target, which surfaced as "Failed to create frame buffer" for MSAA MRTs
             // (e.g. the SSAO prepass). _createInternalTexture already drops mips when samples > 1.
-            const texture = this._createInternalTexture(
-                { width, height },
-                {
-                    generateMipMaps,
-                    type,
-                    format,
-                    samplingMode,
-                    useSRGBBuffer,
-                    samples,
-                    label: labels[i] ?? rtWrapper.label + "-Texture" + i,
-                },
-                true,
-                InternalTextureSource.MultiRenderTarget
-            );
+            // A mixed-type MRT creates the attachment with the dimensionality requested by targetTypes: a cube
+            // texture (one face targeted per attachment) or a 2D-array texture with layerCounts layers (one
+            // layer targeted per attachment). The framebuffer selects the specific face/layer per attachment.
+            const textureLabel = labels[i] ?? rtWrapper.label + "-Texture" + i;
+            const textureOptions = { generateMipMaps, type, format, samplingMode, useSRGBBuffer, samples, label: textureLabel };
+            let texture: InternalTexture;
+            if (target === Constants.TEXTURE_CUBE_MAP) {
+                texture = this._createInternalCubeTexture(width, textureOptions, InternalTextureSource.MultiRenderTarget);
+            } else if (target === Constants.TEXTURE_2D_ARRAY) {
+                const layerCount = Math.max(1, layerCounts?.[i] ?? 1);
+                texture = this._createInternalTexture({ width, height, layers: layerCount }, textureOptions, true, InternalTextureSource.MultiRenderTarget);
+            } else {
+                texture = this._createInternalTexture({ width, height }, textureOptions, true, InternalTextureSource.MultiRenderTarget);
+            }
             texture._cachedWrapU = Constants.TEXTURE_CLAMP_ADDRESSMODE;
             texture._cachedWrapV = Constants.TEXTURE_CLAMP_ADDRESSMODE;
 
@@ -3431,12 +3487,19 @@ export class ThinNativeEngine extends ThinEngine {
             Logger.Warn("NativeEngine.createMultipleRenderTarget: generateDepthTexture is not supported; using a non-sampleable depth buffer.");
         }
 
-        if (layerIndex) {
-            rtWrapper.setLayerAndFaceIndices(layerIndex, (options as unknown as { faceIndex?: number[] })?.faceIndex ?? []);
+        if (isLayeredMRT || layerIndex) {
+            rtWrapper.setLayerAndFaceIndices(layerIndex ?? [], faceIndex ?? []);
         }
 
-        if (!dontCreateTextures && !is3DLayeredMRT) {
+        if (!dontCreateTextures && !isLayeredMRT) {
             rtWrapper._framebuffer = this._engine.createMultiFrameBuffer(colorTextures, width, height, generateStencilBuffer, generateDepthBuffer, samples);
+        }
+
+        // Non-3D layered MRTs (mixed 2D-array / cube / 2D attachments) build their multi-attachment framebuffer
+        // lazily on first bind (like the 3D voxelization MRT, which is routed via is3D). The flag selects that
+        // path in bindFramebuffer so per-attachment layer/face and post-creation setInternalTexture are honored.
+        if (isLayeredMRT && !is3DLayeredMRT) {
+            rtWrapper._isMixedTypeMRT = true;
         }
 
         rtWrapper._samples = samples;
@@ -3623,12 +3686,13 @@ export class ThinNativeEngine extends ThinEngine {
 
         this._currentRenderTarget = texture;
 
-        // Multi render target that writes into several layers of a single 3D texture (the IBL voxelization
-        // MRTs: 8 draw buffers, each targeting a Z-slice of the shared voxel grid). The color textures are
+        // Multi render target whose color attachments each target a specific layer/face of a texture: the IBL
+        // voxelization MRTs (several Z-slices of one shared 3D texture, routed via is3D) and mixed-type MRTs
+        // (2D-array layer / cube face / 2D attachments, routed via _isMixedTypeMRT). The color textures may be
         // swapped in via setInternalTexture after creation, so (re)build the layered multi-attachment
-        // framebuffer here from the current textures + their layer indices.
-        if (nativeRTWrapper.isMulti && nativeRTWrapper.is3D) {
-            this._bindLayered3DMultiFramebuffer(nativeRTWrapper);
+        // framebuffer here from the current textures + their per-attachment layer/face indices.
+        if (nativeRTWrapper.isMulti && (nativeRTWrapper.is3D || nativeRTWrapper._isMixedTypeMRT)) {
+            this._bindLayeredMultiFramebuffer(nativeRTWrapper);
             return;
         }
 
@@ -3694,11 +3758,12 @@ export class ThinNativeEngine extends ThinEngine {
         return framebuffer;
     }
 
-    // (Re)builds and binds the multi-attachment framebuffer for an MRT whose color attachments are distinct
-    // layers of one shared 3D texture (IBL voxelization: 8 draw buffers → 8 Z-slices of the voxel grid). The
-    // shared texture is assigned via setInternalTexture after createMultipleRenderTarget, so the framebuffer is
-    // built lazily here and rebuilt if the underlying texture changes.
-    private _bindLayered3DMultiFramebuffer(nativeRTWrapper: NativeRenderTargetWrapper): void {
+    // (Re)builds and binds the multi-attachment framebuffer for a layered MRT: either an IBL voxelization MRT
+    // (color attachments are distinct Z-slices of one shared 3D texture) or a mixed-type MRT (color attachments
+    // are specific layers of 2D-array textures and/or faces of cube textures, plus plain 2D). A shared texture
+    // may be assigned via setInternalTexture after createMultipleRenderTarget, so the framebuffer is built
+    // lazily here and rebuilt if the primary (first) texture changes.
+    private _bindLayeredMultiFramebuffer(nativeRTWrapper: NativeRenderTargetWrapper): void {
         const textures = nativeRTWrapper.textures;
         const primaryTexture = textures && textures.length > 0 ? textures[0] : nativeRTWrapper.texture;
         if (!nativeRTWrapper._framebuffer || nativeRTWrapper._layered3DFramebufferTexture !== primaryTexture) {
@@ -3706,12 +3771,16 @@ export class ThinNativeEngine extends ThinEngine {
             const layers: number[] = [];
             const layerIndices = nativeRTWrapper.layerIndices;
             for (let i = 0; i < (textures?.length ?? 0); i++) {
-                const nativeTexture = textures![i]?._hardwareTexture?.underlyingResource;
+                const tex = textures![i];
+                const nativeTexture = tex?._hardwareTexture?.underlyingResource;
                 if (!nativeTexture) {
                     continue;
                 }
                 colorTextures.push(nativeTexture);
-                layers.push(layerIndices?.[i] ?? i);
+                // For a 3D render target (IBL voxelization) the attachment layer is the Z-slice. For a cube or
+                // 2D-array color attachment (mixed-type MRT) getBaseArrayLayer maps the wrapper's per-attachment
+                // face/layer to the flat bgfx attachment layer (cube: layer*6+face; 2D-array: layer; 2D: 0).
+                layers.push(tex.is3D ? (layerIndices?.[i] ?? i) : nativeRTWrapper.getBaseArrayLayer(i));
             }
             nativeRTWrapper._framebuffer = this._engine.createMultiFrameBuffer(
                 colorTextures,

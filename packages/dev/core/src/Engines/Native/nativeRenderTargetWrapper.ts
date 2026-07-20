@@ -25,6 +25,13 @@ export class NativeRenderTargetWrapper extends RenderTargetWrapper {
     // eslint-disable-next-line @typescript-eslint/naming-convention
     public _layered3DFramebufferTexture: unknown = undefined;
 
+    // True for a mixed-type MRT whose color attachments target specific layers of 2D-array textures and/or
+    // faces of cube textures (plus plain 2D). Its multi-attachment framebuffer is built lazily on first bind
+    // (via _bindLayeredMultiFramebuffer) so per-attachment layer/face and post-creation setInternalTexture
+    // (a shared texture swapped into an attachment) are honored. The 3D voxelization MRT uses the is3D route.
+    // eslint-disable-next-line @typescript-eslint/naming-convention
+    public _isMixedTypeMRT: boolean = false;
+
     public get _framebuffer(): Nullable<NativeFramebuffer> {
         return this.__framebuffer;
     }
