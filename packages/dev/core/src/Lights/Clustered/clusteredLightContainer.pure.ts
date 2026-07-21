@@ -256,6 +256,9 @@ export class ClusteredLightContainer extends Light {
         if (this._scene.useRightHandedSystem) {
             defines.push("#define RIGHT_HANDED");
         }
+        if (engine.shaderPlatformName === "NATIVE") {
+            defines.push("#define PROXY_FULL_QUAD");
+        }
         this._proxyMaterial = new ShaderMaterial("ProxyMaterial", this._scene, proxyShader, {
             attributes: ["position"],
             uniforms: ["view", "projection", "tileMaskResolution"],
