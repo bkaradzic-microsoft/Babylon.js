@@ -73,11 +73,7 @@ import { type WebGLHardwareTexture } from "./WebGL/webGLHardwareTexture";
 import { type IComputeContext } from "../Compute/IComputeContext";
 import { type IComputePipelineContext } from "../Compute/IComputePipelineContext";
 import { ComputeEffect, type IComputeEffectCreationOptions, type IComputeShaderPath } from "../Compute/computeEffect";
-import {
-    ComputeBindingType,
-    type ComputeBindingList,
-    type ComputeBindingMapping,
-} from "./Extensions/engine.computeShader.pure";
+import { ComputeBindingType, type ComputeBindingList, type ComputeBindingMapping } from "./Extensions/engine.computeShader.pure";
 import { type UniformBuffer } from "../Materials/uniformBuffer";
 
 import { _TimeToken } from "../Instrumentation/timeToken";
@@ -547,7 +543,15 @@ export class ThinNativeEngine extends ThinEngine {
             supportDepthStencilTexture: false,
             supportShadowSamplers: false,
             uniformBufferHardCheckMatrix: false,
-            allowTexturePrefiltering: false,
+            // Native supports GPU cube prefiltering (HDRFiltering / HDRIrradianceFiltering): the render path
+            // binds a specific cube-face + mip via bindFramebuffer(faceIndex, lodLevel) and convolves the
+            // environment per-roughness. Required so OpenPBR/PBR IBL scenes get real prefiltered radiance
+            // (and irradiance) instead of black/energy-lossy CPU-SH fallbacks.
+            allowTexturePrefiltering: true,
+            // The GPU radiance prefilter (specular IBL) works on Native, but the GPU irradiance-texture
+            // convolution loses energy (~0.6x) versus the reference, so diffuse IBL uses CPU spherical
+            // harmonics instead (see envCubeTexture SH fallback + hdrIrradianceFiltering gating).
+            allowIrradianceTexturePrefiltering: false,
             trackUbosInFrame: false,
             checkUbosContentBeforeUpload: false,
             // 2D-array render targets + the SPIRV-Cross narrow-varying-array HLSL fix (see
@@ -2378,13 +2382,7 @@ export class ThinNativeEngine extends ThinEngine {
             // AbstractEngine.GetCompatibleTextureLoader cannot resolve the loader module. Instantiate the
             // statically-bundled IES loader directly instead.
             loaderPromise = Promise.resolve(new _IESTextureLoader());
-        } else if (
-            extension.endsWith(".basis") ||
-            extension.endsWith(".ktx") ||
-            extension.endsWith(".ktx2") ||
-            mimeType === "image/ktx" ||
-            mimeType === "image/ktx2"
-        ) {
+        } else if (extension.endsWith(".basis") || extension.endsWith(".ktx") || extension.endsWith(".ktx2") || mimeType === "image/ktx" || mimeType === "image/ktx2") {
             loaderPromise = AbstractEngine.GetCompatibleTextureLoader(extension);
         }
 
@@ -2843,8 +2841,7 @@ export class ThinNativeEngine extends ThinEngine {
         // _isFrameGraphDepthShared and the field comments above for the full rationale. The shared depth is
         // borrowed (not owned) by the framebuffer; the InternalTexture owns/disposes it.
         const explicitDepthResource = depthStencilTexture?._hardwareTexture?.underlyingResource;
-        const shareExplicitDepth =
-            !!explicitDepthResource && this._isFrameGraphDepthShared(depthStencilTexture!.uniqueId, textures[0].uniqueId, nativeRTWrapper);
+        const shareExplicitDepth = !!explicitDepthResource && this._isFrameGraphDepthShared(depthStencilTexture!.uniqueId, textures[0].uniqueId, nativeRTWrapper);
         const sharedDepthResource = shareExplicitDepth ? explicitDepthResource : undefined;
 
         const cached = hardwareTexture._frameGraphFramebuffer;
@@ -3291,7 +3288,19 @@ export class ThinNativeEngine extends ThinEngine {
         const nativeTextureFormat = getNativeTextureFormat(format, type);
         // See the createRenderTargetTexture MSAA/mips note: avoid the mips + samples combo on bgfx.
         const hasMips = samples > 1 ? false : generateMipMaps;
-        this._engine.initializeTexture(nativeTexture, width, height, hasMips, nativeTextureFormat, /*renderTarget*/ true, /*srgb*/ false, samples, /*isCube*/ false, /*numLayers(depth)*/ depth, /*is3D*/ true);
+        this._engine.initializeTexture(
+            nativeTexture,
+            width,
+            height,
+            hasMips,
+            nativeTextureFormat,
+            /*renderTarget*/ true,
+            /*srgb*/ false,
+            samples,
+            /*isCube*/ false,
+            /*numLayers(depth)*/ depth,
+            /*is3D*/ true
+        );
         this._setTextureSampling(nativeTexture, getNativeSamplingMode(samplingMode));
 
         rtWrapper._generateDepthBuffer = generateDepthBuffer;
@@ -3312,6 +3321,7 @@ export class ThinNativeEngine extends ThinEngine {
         let generateDepthBuffer = true;
         let generateStencilBuffer = false;
         let generateMipMaps = false;
+        let createMipMaps: boolean | undefined;
         let type = Constants.TEXTURETYPE_UNSIGNED_BYTE;
         let samplingMode = Constants.TEXTURE_TRILINEAR_SAMPLINGMODE;
         let format = Constants.TEXTUREFORMAT_RGBA;
@@ -3321,12 +3331,18 @@ export class ThinNativeEngine extends ThinEngine {
             generateDepthBuffer = options.generateDepthBuffer ?? true;
             generateStencilBuffer = !!options.generateStencilBuffer;
             generateMipMaps = !!options.generateMipMaps;
+            createMipMaps = options.createMipMaps;
             type = options.type ?? Constants.TEXTURETYPE_UNSIGNED_BYTE;
             samplingMode = options.samplingMode ?? Constants.TEXTURE_TRILINEAR_SAMPLINGMODE;
             format = options.format ?? Constants.TEXTUREFORMAT_RGBA;
             samples = options.samples ?? 1;
             label = options.label;
         }
+
+        // Storage for a full mip chain is requested via createMipMaps (falling back to generateMipMaps when
+        // unspecified). HDR prefiltering passes createMipMaps:true + generateMipMaps:false because it renders
+        // each roughness mip explicitly and must NOT have them auto-regenerated on unbind.
+        const allocateMips = createMipMaps ?? generateMipMaps;
 
         // Match _createInternalTexture: float/half-float RTTs that the platform can't linearly filter fall
         // back to NEAREST so the cube RTT never carries an unsupported sampling mode.
@@ -3357,7 +3373,7 @@ export class ThinNativeEngine extends ThinEngine {
         const nativeTexture = texture._hardwareTexture!.underlyingResource;
         const nativeTextureFormat = getNativeTextureFormat(format, type);
         // See the createRenderTargetTexture MSAA/mips note: avoid the mips + samples combo on bgfx.
-        const hasMips = samples > 1 ? false : generateMipMaps;
+        const hasMips = samples > 1 ? false : allocateMips;
         this._engine.initializeTexture(nativeTexture, size, size, hasMips, nativeTextureFormat, /*renderTarget*/ true, /*srgb*/ false, samples, /*isCube*/ true);
         this._setTextureSampling(nativeTexture, getNativeSamplingMode(samplingMode));
 
@@ -3680,6 +3696,22 @@ export class ThinNativeEngine extends ThinEngine {
         texture.samplingMode = samplingMode;
     }
 
+    // bgfx has no per-texture wrap state that is decoupled from sampling (addressing is folded into the
+    // sampler flags applied at bind time via _setTextureSampling). So, like the WebGPU engine, just cache
+    // the requested wrap modes on the texture; this exists mainly so the HDR prefiltering render target
+    // path (which sets CLAMP on its cube RT) does not crash by dereferencing the absent WebGL context.
+    public override updateTextureWrappingMode(texture: InternalTexture, wrapU: Nullable<number>, wrapV: Nullable<number> = null, wrapR: Nullable<number> = null): void {
+        if (wrapU !== null) {
+            texture._cachedWrapU = wrapU;
+        }
+        if (wrapV !== null) {
+            texture._cachedWrapV = wrapV;
+        }
+        if ((texture.is2DArray || texture.is3D) && wrapR !== null) {
+            texture._cachedWrapR = wrapR;
+        }
+    }
+
     public override bindFramebuffer(
         texture: RenderTargetWrapper,
         faceIndex?: number,
@@ -3730,8 +3762,14 @@ export class ThinNativeEngine extends ThinEngine {
         }
 
         if (nativeRTWrapper._framebuffers) {
-            // Cube render target: bind the framebuffer for the requested face.
-            this._bindUnboundFramebuffer(nativeRTWrapper._framebuffers[faceIndex ?? 0]);
+            // Cube render target: bind the framebuffer for the requested face. HDR prefiltering renders each
+            // roughness level into its own mip, so for lodLevel > 0 lazily build/cache a per-(face, mip)
+            // framebuffer; the pre-built _framebuffers array only targets mip 0.
+            if (lodLevel) {
+                this._bindUnboundFramebuffer(this._getCubeFaceMipFramebuffer(nativeRTWrapper, faceIndex ?? 0, lodLevel));
+            } else {
+                this._bindUnboundFramebuffer(nativeRTWrapper._framebuffers[faceIndex ?? 0]);
+            }
         } else if (faceIndex) {
             throw new Error("Cuboid frame buffers are not yet supported in NativeEngine.");
         } else if (nativeRTWrapper._framebufferDepthStencil) {
@@ -3762,6 +3800,35 @@ export class ThinNativeEngine extends ThinEngine {
                 nativeRTWrapper._generateDepthBuffer,
                 nativeRTWrapper.samples,
                 layer,
+                mip
+            );
+            nativeRTWrapper._layerFramebuffers.set(key, framebuffer);
+        }
+        return framebuffer;
+    }
+
+    // Returns (building + caching on first use) the bgfx framebuffer that targets a single (face, mip) of a
+    // cube render-target texture. Used by HDR radiance/irradiance prefiltering, whose face×mip loop renders
+    // an increasingly-rough convolution of the environment into each mip via bindFramebuffer(faceIndex, lod).
+    // The pre-built _framebuffers array only covers mip 0, so mips > 0 are built here on demand.
+    private _getCubeFaceMipFramebuffer(nativeRTWrapper: NativeRenderTargetWrapper, face: number, mip: number): NativeFramebuffer {
+        if (!nativeRTWrapper._layerFramebuffers) {
+            nativeRTWrapper._layerFramebuffers = new Map<number, NativeFramebuffer>();
+        }
+        const key = mip * 6 + face;
+        let framebuffer = nativeRTWrapper._layerFramebuffers.get(key);
+        if (!framebuffer) {
+            const nativeTexture = nativeRTWrapper.texture!._hardwareTexture!.underlyingResource;
+            const width = Math.max(1, nativeRTWrapper.width >> mip);
+            const height = Math.max(1, nativeRTWrapper.height >> mip);
+            framebuffer = this._engine.createFrameBuffer(
+                nativeTexture,
+                width,
+                height,
+                nativeRTWrapper._generateStencilBuffer,
+                nativeRTWrapper._generateDepthBuffer,
+                nativeRTWrapper.samples,
+                face,
                 mip
             );
             nativeRTWrapper._layerFramebuffers.set(key, framebuffer);
@@ -4094,13 +4161,7 @@ export class ThinNativeEngine extends ThinEngine {
      * @param buffer an optional destination buffer
      * @returns a promise resolving to the read data
      */
-    public readFromStorageBuffer(
-        _storageBuffer: DataBuffer,
-        _offset?: number,
-        size?: number,
-        buffer?: ArrayBufferView,
-        _noDelay?: boolean
-    ): Promise<ArrayBufferView> {
+    public readFromStorageBuffer(_storageBuffer: DataBuffer, _offset?: number, size?: number, buffer?: ArrayBufferView, _noDelay?: boolean): Promise<ArrayBufferView> {
         return Promise.resolve(buffer ?? new Uint8Array(size ?? 0));
     }
 
@@ -4247,8 +4308,7 @@ export class ThinNativeEngine extends ThinEngine {
                 case ComputeBindingType.Texture:
                 case ComputeBindingType.TextureWithoutSampler:
                 case ComputeBindingType.InternalTexture: {
-                    const internalTexture =
-                        binding.type === ComputeBindingType.InternalTexture ? (binding.object as InternalTexture) : (binding.object as BaseTexture)._texture;
+                    const internalTexture = binding.type === ComputeBindingType.InternalTexture ? (binding.object as InternalTexture) : (binding.object as BaseTexture)._texture;
                     const native = internalTexture?._hardwareTexture?.underlyingResource as NativeData | undefined;
                     if (native) {
                         textures.push({ stage, native });

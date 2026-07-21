@@ -224,13 +224,11 @@ export abstract class EnvCubeTexture extends BaseTexture {
             // Extract the raw linear data.
             const data = await this._getCubeMapTextureDataAsync(buffer, this._size, this._supersample);
 
-            // Generate harmonics if needed. When prefiltering was requested but the engine cannot
-            // prefilter textures (e.g. Babylon Native or WebGL1), neither a prefiltered irradiance
-            // map nor a prefiltered radiance cube is produced. In that case fall back to
-            // CPU-computed spherical harmonics so diffuse IBL still has a source; without this the
-            // reflection texture keeps an empty spherical polynomial and diffuse IBL renders black.
-            const prefilterUnavailable =
-                (this._prefilterOnLoad || this._prefilterIrradianceOnLoad) && !engine._features.allowTexturePrefiltering;
+            // Generate harmonics if needed. When irradiance prefiltering was requested but the engine cannot
+            // produce a GPU irradiance texture (e.g. Babylon Native or WebGL1 — even if it CAN prefilter the
+            // radiance cube), fall back to CPU-computed spherical harmonics so diffuse IBL still has a source;
+            // without this the reflection texture keeps an empty spherical polynomial and diffuse renders black.
+            const prefilterUnavailable = (this._prefilterOnLoad || this._prefilterIrradianceOnLoad) && !engine._features.allowIrradianceTexturePrefiltering;
             if (this._generateHarmonics || prefilterUnavailable) {
                 const sphericalPolynomial = CubeMapToSphericalPolynomialTools.ConvertCubeMapToSphericalPolynomial(data, this._sphericalPolynomialTargetSize);
                 this.sphericalPolynomial = sphericalPolynomial;
@@ -304,7 +302,9 @@ export abstract class EnvCubeTexture extends BaseTexture {
             return results;
         };
 
-        if (engine._features.allowTexturePrefiltering && (this._prefilterOnLoad || this._prefilterIrradianceOnLoad)) {
+        const canPrefilterRadiance = engine._features.allowTexturePrefiltering && this._prefilterOnLoad;
+        const canPrefilterIrradiance = engine._features.allowIrradianceTexturePrefiltering && this._prefilterIrradianceOnLoad;
+        if (canPrefilterRadiance || canPrefilterIrradiance) {
             const previousOnLoad = this._onLoad;
             const previousOnError = this._onError;
             const hdrFiltering = new HDRFiltering(engine);
@@ -324,7 +324,7 @@ export abstract class EnvCubeTexture extends BaseTexture {
                 void (async () => {
                     try {
                         let irradianceTexture: Nullable<BaseTexture> = null;
-                        if (this._prefilterIrradianceOnLoad) {
+                        if (canPrefilterIrradiance) {
                             const hdrIrradianceFiltering = new HDRIrradianceFiltering(engine, { useCdf: this._prefilterUsingCdf });
                             irradianceTexture = await hdrIrradianceFiltering.prefilter(this);
                         }
@@ -332,7 +332,7 @@ export abstract class EnvCubeTexture extends BaseTexture {
                         // Run irradiance prefiltering first because it samples the current source texture.
                         // Radiance prefiltering mutates/swaps the source internal texture, so running both
                         // concurrently can lead to stale/destroyed texture references on WebGPU.
-                        if (this._prefilterIrradianceOnLoad && irradianceTexture) {
+                        if (canPrefilterIrradiance && irradianceTexture) {
                             this.irradianceTexture = irradianceTexture;
                             const innerScene = this.getScene();
                             if (innerScene) {
@@ -340,7 +340,7 @@ export abstract class EnvCubeTexture extends BaseTexture {
                             }
                         }
 
-                        if (this._prefilterOnLoad) {
+                        if (canPrefilterRadiance) {
                             await hdrFiltering.prefilter(this);
                         }
                     } finally {
