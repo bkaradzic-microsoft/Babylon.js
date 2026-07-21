@@ -551,6 +551,11 @@ export class ThinNativeEngine extends ThinEngine {
             // The GPU radiance prefilter (specular IBL) works on Native, but the GPU irradiance-texture
             // convolution loses energy (~0.6x) versus the reference, so diffuse IBL uses CPU spherical
             // harmonics instead (see envCubeTexture SH fallback + hdrIrradianceFiltering gating).
+            // The GPU radiance prefilter (specular IBL) works on Native, but the GPU irradiance-texture
+            // convolution loses energy (~0.5-0.6x) versus the reference regardless of input mip level
+            // (verified: forcing input mip 0 still renders ~0.5x, so it is NOT the mip-LOD formula but an
+            // energy loss inside the bgfx float-cube upload/sample or irradiance-map gamma path). CPU
+            // spherical harmonics (~0.83x, and passes) is closer, so diffuse IBL uses SH on Native.
             allowIrradianceTexturePrefiltering: false,
             trackUbosInFrame: false,
             checkUbosContentBeforeUpload: false,
