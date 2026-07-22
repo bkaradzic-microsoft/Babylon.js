@@ -154,6 +154,16 @@ export interface WebGPUEngineOptions extends AbstractEngineOptions, GPURequestAd
     forceFallbackAdapter?: boolean;
 
     /**
+     * When set to true, requests a GPU adapter that is compatible with the user agent's XR device,
+     * as required to create a WebGPU-compatible WebXR session (see the WebXR/WebGPU binding spec).
+     * This mirrors the WebGL `xrCompatible` context attribute and must be set when the engine is
+     * created (adapter-request time): WebGPU has no post-hoc "make XR compatible" step, so it cannot
+     * be toggled on later. Leave unset/false for the default non-XR path.
+     * Default: false
+     */
+    xrCompatible?: boolean;
+
+    /**
      * Defines the device descriptor used to create a device once we have retrieved an appropriate adapter
      */
     deviceDescriptor?: GPUDeviceDescriptor;
@@ -591,8 +601,11 @@ export class WebGPUEngine extends ThinWebGPUEngine {
         this._compatibilityMode = mode;
     }
 
-    /** @internal */
-    public get currentSampleCount(): number {
+    /**
+     * Gets the number of samples used by the current render target
+     * @returns the current sample count, or 1 when multisampling is disabled
+     */
+    public override get currentSampleCount(): number {
         return this._currentRenderTarget ? this._currentRenderTarget.samples : this._mainPassSampleCount;
     }
 
@@ -1366,6 +1379,7 @@ export class WebGPUEngine extends ThinWebGPUEngine {
 
             this._alphaState.reset();
             this._resetAlphaMode();
+            this._cacheRenderPipeline.setAlphaToCoverage(this._alphaState.alphaToCoverage);
             this._cacheRenderPipeline.setAlphaBlendFactors(this._alphaState._blendFunctionParameters, this._alphaState._blendEquationParameters);
             this._cacheRenderPipeline.setAlphaBlendEnabled(this._alphaState._alphaBlend, this._alphaState._numTargetEnabled);
 
@@ -1392,6 +1406,15 @@ export class WebGPUEngine extends ThinWebGPUEngine {
      */
     public override getColorWrite(): boolean {
         return this._colorWriteLocal;
+    }
+
+    /**
+     * Enable or disable alpha-to-coverage
+     * @param enable defines the state to set
+     */
+    public override setAlphaToCoverage(enable: boolean): void {
+        super.setAlphaToCoverage(enable);
+        this._cacheRenderPipeline.setAlphaToCoverage(enable);
     }
 
     //------------------------------------------------------------------------------
@@ -2576,6 +2599,13 @@ export class WebGPUEngine extends ThinWebGPUEngine {
      */
     public wrapWebGPUTexture(texture: GPUTexture): InternalTexture {
         const hardwareTexture = new WebGPUHardwareTexture(this, texture);
+        // Report the real format of the wrapped texture. The hardware texture otherwise keeps its
+        // default (RGBA8Unorm); the render-pass color attachment view + pipeline color target are
+        // built from hardwareTexture.format (see _setColorFormat / bindFramebuffer), so an external
+        // texture created with any other format (e.g. bgra8unorm or an *-srgb variant, as returned by
+        // XRGPUBinding.getPreferredColorFormat()) would otherwise get a mismatched view and fail to render.
+        hardwareTexture.format = texture.format;
+        hardwareTexture.originalFormat = texture.format;
         const internalTexture = new InternalTexture(this, InternalTextureSource.External, true);
         internalTexture._hardwareTexture = hardwareTexture;
         internalTexture.baseWidth = texture.width;

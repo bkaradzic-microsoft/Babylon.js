@@ -239,20 +239,10 @@ export class ThinEngine extends AbstractEngine {
     private _nextFreeTextureSlots = new Array<number>();
     private _maxSimultaneousTextures = 0;
     private _maxMSAASamplesOverride: Nullable<number> = null;
+    private _mainPassSampleCount = 1;
 
     protected get _supportsHardwareTextureRescaling() {
         return false;
-    }
-
-    protected _framebufferDimensionsObject: Nullable<{ framebufferWidth: number; framebufferHeight: number }>;
-
-    /**
-     * sets the object from which width and height will be taken from when getting render width and height
-     * Will fallback to the gl object
-     * @param dimensions the framebuffer width and height that will be used.
-     */
-    public set framebufferDimensionsObject(dimensions: Nullable<{ framebufferWidth: number; framebufferHeight: number }>) {
-        this._framebufferDimensionsObject = dimensions;
     }
 
     /**
@@ -493,6 +483,8 @@ export class ThinEngine extends AbstractEngine {
     }
 
     protected _initGLContext(): void {
+        this._mainPassSampleCount = this._gl.getContextAttributes()?.antialias ? Math.max(1, this._gl.getParameter(this._gl.SAMPLES)) : 1;
+
         // Caps
         this._caps = {
             maxTexturesImageUnits: this._gl.getParameter(this._gl.MAX_TEXTURE_IMAGE_UNITS),
@@ -943,6 +935,25 @@ export class ThinEngine extends AbstractEngine {
         }
 
         return this._framebufferDimensionsObject ? this._framebufferDimensionsObject.framebufferHeight : this._gl.drawingBufferHeight;
+    }
+
+    /**
+     * Gets the number of samples used by the current render target
+     * @returns the current sample count, or 1 when multisampling is disabled
+     */
+    public override get currentSampleCount(): number {
+        return this._currentRenderTarget?.samples ?? this._mainPassSampleCount;
+    }
+
+    /**
+     * Enable or disable alpha-to-coverage
+     * @param enable defines the state to set
+     */
+    public override setAlphaToCoverage(enable: boolean): void {
+        super.setAlphaToCoverage(enable);
+        if (this._gl) {
+            this._alphaState.applyAlphaToCoverage(this._gl);
+        }
     }
 
     /**
@@ -4717,16 +4728,3 @@ interface TexImageParameters {
     format: number;
     type: number;
 }
-
-// #region GENERATED_SIDE_EFFECT_STUBS — do not edit, regenerate with `npm run generate:side-effect-stubs`
-import { _MissingSideEffect } from "../Misc/devTools";
-
-ThinEngine.prototype.startTimeQuery ??= _MissingSideEffect("ThinEngine", "startTimeQuery") as any;
-ThinEngine.prototype.endTimeQuery ??= _MissingSideEffect("ThinEngine", "endTimeQuery") as any;
-ThinEngine.prototype.createUniformBuffer ??= _MissingSideEffect("ThinEngine", "createUniformBuffer") as any;
-ThinEngine.prototype.createDynamicUniformBuffer ??= _MissingSideEffect("ThinEngine", "createDynamicUniformBuffer") as any;
-ThinEngine.prototype.updateUniformBuffer ??= _MissingSideEffect("ThinEngine", "updateUniformBuffer") as any;
-ThinEngine.prototype.bindUniformBuffer ??= _MissingSideEffect("ThinEngine", "bindUniformBuffer") as any;
-ThinEngine.prototype.bindUniformBufferBase ??= _MissingSideEffect("ThinEngine", "bindUniformBufferBase") as any;
-ThinEngine.prototype.bindUniformBlock ??= _MissingSideEffect("ThinEngine", "bindUniformBlock") as any;
-// #endregion GENERATED_SIDE_EFFECT_STUBS

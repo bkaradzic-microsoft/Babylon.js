@@ -756,10 +756,16 @@ export class ThinNativeEngine extends ThinEngine {
     }
 
     public override clear(color: Nullable<IColor4Like>, backBuffer: boolean, depth: boolean, stencil: boolean = false, stencilClearValue = 0): void {
-        // Reverse depth buffer: the depth range runs far(0) -> near(1), so the buffer must be
-        // cleared to 0 and the compare function flipped to GEQUAL. Mirrors ThinEngine.clear().
-        if (this.useReverseDepthBuffer) {
+        if (depth && this.useReverseDepthBuffer) {
+            // Reverse-Z: the scene is rendered with a flipped projection (near maps to 1, far to 0), so the
+            // depth buffer is cleared to 0 and the comparison must accept greater values. The WebGL engine
+            // sets depthCullingState.depthFunc = GEQUAL here and relies on applyStates() running the depth
+            // comparison to the GL context before each draw. The native draw path does not call applyStates()
+            // (only depth-test enable/disable is reconciled in _flushDepthTestState()), so setting the shared
+            // state alone would never reach the backend. Route the comparison through the native command path
+            // as well -- mirroring the WebGPU engine's clear path, which calls setDepthFunctionToGreaterOrEqual().
             this._depthCullingState.depthFunc = Constants.GEQUAL;
+            this.setDepthFunction(Constants.GEQUAL);
         }
 
         this._commandBufferEncoder.startEncodingCommand(_native.Engine.COMMAND_CLEAR);
@@ -769,7 +775,7 @@ export class ThinNativeEngine extends ThinEngine {
         this._commandBufferEncoder.encodeCommandArgAsFloat32(color ? color.b : 0);
         this._commandBufferEncoder.encodeCommandArgAsFloat32(color ? color.a : 1);
         this._commandBufferEncoder.encodeCommandArgAsUInt32(depth ? 1 : 0);
-        this._commandBufferEncoder.encodeCommandArgAsFloat32(this.useReverseDepthBuffer ? 0 : 1);
+        this._commandBufferEncoder.encodeCommandArgAsFloat32(depth && this.useReverseDepthBuffer ? 0 : 1);
         this._commandBufferEncoder.encodeCommandArgAsUInt32(stencil ? 1 : 0);
         this._commandBufferEncoder.encodeCommandArgAsUInt32(stencilClearValue);
         this._commandBufferEncoder.finishEncodingCommand();
@@ -1980,10 +1986,10 @@ export class ThinNativeEngine extends ThinEngine {
     }
 
     public override createDynamicTexture(width: number, height: number, generateMipMaps: boolean, samplingMode: number): InternalTexture {
-        // it's not possible to create 0x0 texture sized. Many bgfx methods assume texture size is at least 1x1(best case).
-        // Worst case is getting a crash/assert.
-        width = Math.max(width, 1);
-        height = Math.max(height, 1);
+        // Canvas dimensions are integral in browsers. Coerce before allocating so the native dimensions and byte length agree.
+        // Keep at least 1x1 because many bgfx methods assume a non-zero texture size.
+        width = Math.max(Math.floor(width), 1);
+        height = Math.max(Math.floor(height), 1);
         return this.createRawTexture(new Uint8Array(width * height * 4), width, height, Constants.TEXTUREFORMAT_RGBA, false, false, samplingMode);
     }
 
@@ -3405,10 +3411,13 @@ export class ThinNativeEngine extends ThinEngine {
     }
 
     // The Native engine renders a multi render target through a single bgfx framebuffer with several color
-    // attachments (see NativeEngine.cpp CreateMultiFrameBuffer / CreateFrameBufferImpl). Only the standard
-    // 2D-color-attachment case used by the WebGL prepass / geometry-buffer path is supported here; cube /
-    // 3D / 2D-array MRT targets and sampleable depth textures (generateDepthTexture) are not.
-    public override createMultipleRenderTarget(size: TextureSize, options: IMultiRenderTargetOptions, initializeBuffers: boolean = true): RenderTargetWrapper {
+    // attachments (see NativeEngine.cpp CreateMultiFrameBuffer / CreateFrameBufferImpl). Plain 2D color
+    // attachments (the WebGL prepass / geometry-buffer path) build their framebuffer eagerly here; mixed-type
+    // attachments (specific cube faces / 2D-array layers) and 3D voxelization MRTs build a layered
+    // multi-attachment framebuffer lazily on first bind. Sampleable depth textures (generateDepthTexture)
+    // are not supported. Attachments swapped after creation (e.g. the OIT depth-peeling renderer) rebuild the
+    // framebuffer via _createMultiRenderTargetFramebuffer (called from NativeRenderTargetWrapper.setTexture).
+    public override createMultipleRenderTarget(size: TextureSize, options: IMultiRenderTargetOptions, _initializeBuffers = true): RenderTargetWrapper {
         let generateMipMaps = false;
         let generateDepthBuffer = true;
         let generateStencilBuffer = false;
@@ -3540,54 +3549,68 @@ export class ThinNativeEngine extends ThinEngine {
         return rtWrapper;
     }
 
-    public override updateMultipleRenderTargetTextureSampleCount(rtWrapper: Nullable<RenderTargetWrapper>, samples: number, _initializeBuffers: boolean = true): number {
-        // MSAA multi render target resolve is not implemented on Native (the framebuffer is created with its
-        // sample count up-front in createMultipleRenderTarget). Report the wrapper's effective sample count.
-        if (!rtWrapper) {
-            return 1;
+    /**
+     * Creates (or recreates) the native framebuffer of a multi render target from the color attachment
+     * textures currently held by the wrapper. bgfx binds a fixed attachment set when a framebuffer is
+     * created and cannot re-point an individual attachment the way GL's framebufferTexture2D can, so the
+     * whole framebuffer has to be recreated whenever an attachment is swapped after creation (e.g. the OIT
+     * depth-peeling renderer replaces every attachment via MultiRenderTarget.setInternalTexture).
+     * @param rtWrapper The multi render target wrapper to build the framebuffer for.
+     * @internal
+     */
+    public _createMultiRenderTargetFramebuffer(rtWrapper: NativeRenderTargetWrapper): void {
+        const textures = rtWrapper.textures;
+        if (!textures) {
+            return;
         }
-        return rtWrapper.samples;
-    }
 
-    public override unBindMultiColorAttachmentFramebuffer(rtWrapper: RenderTargetWrapper, _disableGenerateMipMaps: boolean = false, onBeforeUnbind?: () => void): void {
-        this._currentRenderTarget = null;
-        if (onBeforeUnbind) {
-            onBeforeUnbind();
-        }
-        this._bindUnboundFramebuffer(null);
-    }
-
-    public override bindAttachments(_attachments: number[]): void {
-        // The bound multi-attachment bgfx framebuffer already writes all of its color attachments; selecting
-        // a subset of draw buffers is not wired up on Native, so this is a no-op.
-    }
-
-    public override buildTextureLayout(textureStatus: boolean[], backBufferLayout: boolean = false): number[] {
-        const result: number[] = [];
-        if (backBufferLayout) {
-            result.push(1);
-        } else {
-            for (let i = 0; i < textureStatus.length; i++) {
-                result.push(textureStatus[i] ? i + 1 : 0);
+        const colorHandles: NativeTexture[] = [];
+        for (const texture of textures) {
+            const handle = texture?._hardwareTexture?.underlyingResource;
+            if (handle) {
+                colorHandles.push(handle);
             }
         }
-        return result;
-    }
 
-    public override restoreSingleAttachment(): void {
-        // No-op on Native (draw-buffer subset selection is not used).
-    }
+        // bgfx framebuffers use a dense, ordered attachment list, so only (re)build once every expected color
+        // attachment is present. Building from a partial set (e.g. attachments deferred via dontCreateTextures /
+        // targetTypes[i] === -1, or filled out of order) would compress the attachment indices -- attachment 2
+        // would become attachment 1, etc. -- and produce a framebuffer that does not match the MRT layout. The
+        // count match guarantees the collected handles are contiguous and in attachment order.
+        const expectedCount = rtWrapper._attachments ? rtWrapper._attachments.length : colorHandles.length;
+        if (colorHandles.length === 0 || colorHandles.length !== expectedCount) {
+            return;
+        }
 
-    public override restoreSingleAttachmentForRenderTarget(): void {
-        // No-op on Native (draw-buffer subset selection is not used).
-    }
+        const width = rtWrapper.width;
+        const height = rtWrapper.height;
 
-    public override generateMipMapsMultiFramebuffer(_texture: RenderTargetWrapper): void {
-        // bgfx auto-generates mips on render-target resolve; no explicit mipgen is issued on Native.
-    }
-
-    public override resolveMultiFramebuffer(_texture: RenderTargetWrapper): void {
-        // No MSAA multi render target resolve on Native (single-sample MRT only).
+        if (this._engine.createMultiFrameBuffer) {
+            rtWrapper._framebuffer = this._engine.createMultiFrameBuffer(
+                colorHandles,
+                width,
+                height,
+                rtWrapper._generateStencilBuffer,
+                rtWrapper._generateDepthBuffer,
+                rtWrapper._samples
+            );
+        } else {
+            // Older Babylon Native binaries (predating multi render target support) do not expose createMultiFrameBuffer.
+            // Fall back to a single-attachment framebuffer bound to the first color target so the scene keeps rendering.
+            // Warn once (limit 1): the framebuffer can be rebuilt many times during attachment setup/swaps.
+            Logger.Warn(
+                "createMultiFrameBuffer is not supported by this version of Babylon Native; multi render targets are unavailable. Falling back to a single-attachment framebuffer bound to the first color target.",
+                1
+            );
+            rtWrapper._framebuffer = this._engine.createFrameBuffer(
+                colorHandles[0],
+                width,
+                height,
+                rtWrapper._generateStencilBuffer,
+                rtWrapper._generateDepthBuffer,
+                rtWrapper._samples
+            );
+        }
     }
 
     public override generateMipMapsForCubemap(_texture: InternalTexture, _unbind = true): void {
@@ -3595,6 +3618,91 @@ export class ThinNativeEngine extends ThinEngine {
         // null on Native. bgfx auto-generates the mip chain when a render target texture created with mips is
         // resolved (the same way 2D RTTs get their mips here -- unBindFramebuffer issues no explicit mipgen),
         // so this is a no-op on Native.
+    }
+
+    public override bindAttachments(_attachments: number[]): void {
+        // No-op on Native: bgfx renders to every color attachment of the bound framebuffer, so there is
+        // no gl.drawBuffers equivalent to select a subset.
+    }
+
+    public override buildTextureLayout(textureStatus: boolean[], _backBufferLayout = false): number[] {
+        // Native has no gl draw-buffer enums; return a per-attachment index list (consumers only use the
+        // length/order, and bindAttachments is a no-op).
+        const result: number[] = [];
+        for (let i = 0; i < textureStatus.length; i++) {
+            result.push(textureStatus[i] ? i : -1);
+        }
+        return result;
+    }
+
+    public override restoreSingleAttachment(): void {
+        // No-op on Native (see bindAttachments).
+    }
+
+    public override restoreSingleAttachmentForRenderTarget(): void {
+        // No-op on Native (see bindAttachments).
+    }
+
+    public override generateMipMapsMultiFramebuffer(_texture: RenderTargetWrapper): void {
+        // No-op on Native: bgfx auto-generates mips on render-target resolve (as for 2D/cube RTTs).
+    }
+
+    public override resolveMultiFramebuffer(_texture: RenderTargetWrapper): void {
+        // No-op on Native: bgfx resolves MSAA render targets automatically.
+    }
+
+    public override unBindMultiColorAttachmentFramebuffer(_rtWrapper: RenderTargetWrapper, _disableGenerateMipMaps = false, onBeforeUnbind?: () => void): void {
+        this._currentRenderTarget = null;
+        if (onBeforeUnbind) {
+            onBeforeUnbind();
+        }
+        this._bindUnboundFramebuffer(null);
+    }
+
+    public override updateMultipleRenderTargetTextureSampleCount(rtWrapper: Nullable<RenderTargetWrapper>, samples: number, _initializeBuffers = true): number {
+        if (!rtWrapper || rtWrapper.samples === samples) {
+            return samples;
+        }
+
+        const textures = rtWrapper.textures;
+        if (!textures) {
+            return rtWrapper.samples;
+        }
+
+        const nativeRTWrapper = rtWrapper as NativeRenderTargetWrapper;
+
+        // bgfx couples MSAA to the texture creation flags (see updateRenderTargetTextureSampleCount), so
+        // changing the sample count after the fact requires reissuing every color attachment's underlying
+        // bgfx handle with the new MSAA flag. initializeTexture disposes the old handle and allocates a fresh
+        // one while preserving the InternalTexture / Graphics::Texture identity; only the internal bgfx handle
+        // rotates. Afterwards the framebuffer is recreated so its attachment list refers to the new handles.
+        for (const texture of textures) {
+            // Wrapped (External-source) textures own an opaque external handle (format=-1); reinitializing
+            // would destroy it and getNativeTextureFormat would throw, so leave those attachments untouched.
+            if (!texture?._hardwareTexture || texture.source === InternalTextureSource.External) {
+                continue;
+            }
+
+            const nativeTexture = texture._hardwareTexture.underlyingResource;
+            // See the bgfx-msaa-mips workaround in updateRenderTargetTextureSampleCount (BabylonNative#1714).
+            const hasMips = samples > 1 ? false : texture.generateMipMaps;
+            this._engine.initializeTexture(
+                nativeTexture,
+                texture.baseWidth,
+                texture.baseHeight,
+                hasMips,
+                getNativeTextureFormat(texture.format, texture.type),
+                /*renderTarget*/ true,
+                texture._useSRGBBuffer,
+                samples
+            );
+            texture.samples = samples;
+        }
+
+        nativeRTWrapper._samples = samples;
+        this._createMultiRenderTargetFramebuffer(nativeRTWrapper);
+
+        return samples;
     }
 
     public override updateRenderTargetTextureSampleCount(rtWrapper: RenderTargetWrapper, samples: number): number {
