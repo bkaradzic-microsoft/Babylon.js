@@ -549,13 +549,13 @@ export class ThinNativeEngine extends ThinEngine {
             // (and irradiance) instead of black/energy-lossy CPU-SH fallbacks.
             allowTexturePrefiltering: true,
             // The GPU radiance prefilter (specular IBL) works on Native, but the GPU irradiance-texture
-            // convolution loses energy (~0.6x) versus the reference, so diffuse IBL uses CPU spherical
-            // harmonics instead (see envCubeTexture SH fallback + hdrIrradianceFiltering gating).
-            // The GPU radiance prefilter (specular IBL) works on Native, but the GPU irradiance-texture
-            // convolution loses energy (~0.5-0.6x) versus the reference regardless of input mip level
-            // (verified: forcing input mip 0 still renders ~0.5x, so it is NOT the mip-LOD formula but an
-            // energy loss inside the bgfx float-cube upload/sample or irradiance-map gamma path). CPU
-            // spherical harmonics (~0.83x, and passes) is closer, so diffuse IBL uses SH on Native.
+            // convolution does not match the reference on high-contrast environments: on room.hdr it is
+            // within 1-2%, while on harties_cliff_view_4k.hdr it renders at 0.651/0.691/0.725 of the
+            // reference. The loss is colour-dependent (red loses most) and unchanged by forcing input
+            // mip 0, so it is the bright warm sun peak being dropped somewhere in the bgfx float-cube
+            // sample path, not the mip-LOD formula and not a flat energy scale. Diffuse IBL therefore
+            // uses the deterministic CPU cosine convolution in CubeMapToIrradianceMapTools instead
+            // (see envCubeTexture, which bakes a real irradiance cube when this flag is false).
             allowIrradianceTexturePrefiltering: false,
             trackUbosInFrame: false,
             checkUbosContentBeforeUpload: false,

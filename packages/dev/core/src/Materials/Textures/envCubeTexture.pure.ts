@@ -7,6 +7,7 @@ import { BaseTexture } from "../../Materials/Textures/baseTexture.pure";
 import { Texture } from "../../Materials/Textures/texture.pure";
 import { Constants } from "../../Engines/constants";
 import { CubeMapToSphericalPolynomialTools } from "../../Misc/HighDynamicRange/cubemapToSphericalPolynomial";
+import { CubeMapToIrradianceMapTools } from "../../Misc/HighDynamicRange/cubemapToIrradiance";
 import { Observable } from "../../Misc/observable.pure";
 import { TimingTools } from "../../Misc/timingTools";
 import { ToGammaSpace } from "../../Maths/math.constants";
@@ -22,6 +23,12 @@ import { SphericalPolynomial } from "../../Maths/sphericalPolynomial.pure";
  */
 export abstract class EnvCubeTexture extends BaseTexture {
     private static _FacesMapping = ["right", "left", "up", "down", "front", "back"];
+
+    /**
+     * Face size of the CPU-baked irradiance fallback map. Irradiance is very low frequency, so a small
+     * face is plenty and keeps the O(output x input) convolution affordable at load time.
+     */
+    private static _IrradianceMapSize = 16;
 
     protected _generateHarmonics = true;
     protected _noMipmap: boolean;
@@ -232,6 +239,35 @@ export abstract class EnvCubeTexture extends BaseTexture {
             if (this._generateHarmonics || prefilterUnavailable) {
                 const sphericalPolynomial = CubeMapToSphericalPolynomialTools.ConvertCubeMapToSphericalPolynomial(data, this._sphericalPolynomialTargetSize);
                 this.sphericalPolynomial = sphericalPolynomial;
+            }
+
+            // Spherical harmonics are only a 3rd-order approximation and lose a lot of energy on
+            // high-contrast environments. When an irradiance map was explicitly requested but the engine
+            // cannot render the GPU prefilter, convolve one on the CPU instead so diffuse IBL keeps the
+            // peaks. Only float formats are worth baking: byte cubes clamp the HDR range away anyway.
+            if (
+                this._prefilterIrradianceOnLoad &&
+                !engine._features.allowIrradianceTexturePrefiltering &&
+                (textureType === Constants.TEXTURETYPE_FLOAT || textureType === Constants.TEXTURETYPE_HALF_FLOAT)
+            ) {
+                const irradianceFaces = CubeMapToIrradianceMapTools.ConvertCubeMapToIrradianceMap(data, EnvCubeTexture._IrradianceMapSize);
+                const irradianceInternalTexture = engine.createRawCubeTexture(
+                    irradianceFaces,
+                    EnvCubeTexture._IrradianceMapSize,
+                    Constants.TEXTUREFORMAT_RGB,
+                    Constants.TEXTURETYPE_FLOAT,
+                    /* generateMipMaps */ false,
+                    /* invertY */ false,
+                    Constants.TEXTURE_LINEAR_LINEAR
+                );
+
+                const irradianceTexture = new BaseTexture(this.getScene(), irradianceInternalTexture);
+                irradianceTexture.name = this.name + "_irradiance";
+                irradianceTexture.displayName = irradianceTexture.name;
+                irradianceTexture.gammaSpace = false;
+                this.irradianceTexture = irradianceTexture;
+
+                this.getScene()?.markAllMaterialsAsDirty(Constants.MATERIAL_TextureDirtyFlag);
             }
 
             const results = [];
