@@ -3086,16 +3086,11 @@ export class ThinNativeEngine extends ThinEngine {
 
         const nativeTexture = texture._hardwareTexture!.underlyingResource;
         const nativeTextureFormat = getNativeTextureFormat(format, type);
-        // TODO(bgfx-msaa-mips): stopgap workaround for a bgfx bug -- D3D11/D3D12/Vulkan backends share one
-        // texture descriptor between the MSAA render target and the non-MSAA resolve target, so requesting
-        // both mips > 1 and samples > 1 makes the API (D3D11 E_INVALIDARG, Vulkan VUID-02257, ...) reject the
-        // MSAA texture creation. Force hasMips = false here to keep the combo from reaching bgfx. The fix
-        // belongs in bgfx (separate descs per target, like OpenGL/WebGL do with a non-mipped renderbuffer);
-        // this guard should be removed once a fixed bgfx ships in a stable BabylonNative npm release. Tracked
-        // in BabylonNative#1714. Cost: MSAA RTs on Native lose post-resolve auto-mipgen and diverge from
-        // WebGL/WebGPU semantics -- texture.generateMipMaps stays true on the InternalTexture but the
-        // underlying bgfx resource has 1 mip.
-        const hasMips = samples > 1 ? false : generateMipMaps;
+        // MSAA render targets keep their requested mip chain. The bgfx D3D11 backend resets MipLevels=1 for
+        // the multisampled surface (m_rt2d) and keeps RENDER_TARGET on the single-sample resolve target
+        // (m_texture2d) so its mip chain is auto-generated after resolve (renderer_d3d11.cpp). Previously
+        // forced to false for samples > 1 to dodge a bgfx crash (BabylonNative#1714), now fixed for D3D11.
+        const hasMips = generateMipMaps;
         // REVIEW: We are always setting the renderTarget flag as we don't know whether the texture will be used as a render target.
         // A layers > 0 request creates a 2D texture array (e.g. a cascaded-shadow-map render target); the
         // matching per-layer framebuffers are built by createRenderTargetTexture and bound via bindFramebuffer(layer).
@@ -3684,8 +3679,11 @@ export class ThinNativeEngine extends ThinEngine {
             }
 
             const nativeTexture = texture._hardwareTexture.underlyingResource;
-            // See the bgfx-msaa-mips workaround in updateRenderTargetTextureSampleCount (BabylonNative#1714).
-            const hasMips = samples > 1 ? false : texture.generateMipMaps;
+            // MSAA render targets keep their requested mip chain: the bgfx D3D11 backend resets MipLevels=1
+            // for the multisampled surface and generates the mip chain on the single-sample resolve target
+            // after resolve (see the RENDER_TARGET/GENERATE_MIPS handling in renderer_d3d11.cpp). Previously
+            // forced to false to dodge a bgfx crash (BabylonNative#1714), now fixed.
+            const hasMips = texture.generateMipMaps;
             this._engine.initializeTexture(
                 nativeTexture,
                 texture.baseWidth,
@@ -3735,20 +3733,15 @@ export class ThinNativeEngine extends ThinEngine {
         // only the internal bgfx handle rotates. After the texture is reissued we also recreate the
         // framebuffer so its attachment list refers to the new handle.
         //
-        // TODO(bgfx-msaa-mips): stopgap workaround for a bgfx bug. D3D11 forbids MipLevels > 1 on
-        // multisampled textures (E_INVALIDARG on CreateTexture2D); D3D12/Vulkan have equivalent rules. bgfx's
-        // D3D11 backend uses one D3D11_TEXTURE2D_DESC for both the MSAA render texture (m_rt2d) and the
-        // non-MSAA sample target (m_texture2d) and doesn't reset desc.MipLevels between them -- so requesting
-        // samples > 1 with hasMips = true crashes at m_rt2d creation. The trigger in practice is the glTF
-        // transmission helper, which creates an `opaqueSceneTexture` RTT with generateMipmaps: true and
-        // immediately sets samples = 4. WebGL2 sidesteps this with a separate non-mipped multisample
-        // renderbuffer; bgfx D3D11 conflates the two-stage pattern. The proper fix lives in bgfx (per-backend
-        // patches reset MipLevels=1 for the MSAA target). Tracked in BabylonNative#1714. Until that ships
-        // through bgfx -> bgfx.cmake -> BabylonNative -> stable npm, force hasMips = false here so the bad
-        // combo never reaches bgfx. Cost: MSAA RTs on Native lose post-resolve auto-mipgen and diverge from
-        // WebGL/WebGPU semantics -- texture.generateMipMaps still reads true on the JS side, but the
-        // underlying bgfx resource has 1 mip level. Remove this guard once a fixed bgfx is in stable BN npm.
-        const hasMips = samples > 1 ? false : texture.generateMipMaps;
+        // MSAA render targets keep their requested mip chain (generateMipMaps). Historically this was forced
+        // to false for samples > 1 to dodge a bgfx D3D11 crash: it used one D3D11_TEXTURE2D_DESC for both the
+        // multisampled render texture (m_rt2d) and the single-sample resolve target (m_texture2d) without
+        // resetting MipLevels, so MipLevels > 1 on the multisample texture failed with E_INVALIDARG. The bgfx
+        // backend now resets MipLevels=1 for m_rt2d and keeps RENDER_TARGET on m_texture2d so its mip chain is
+        // auto-generated after resolve (renderer_d3d11.cpp). The trigger in practice is the glTF transmission
+        // helper, whose opaqueSceneTexture RTT sets generateMipmaps + samples = 4 and needs the mip chain for
+        // roughness-based refraction blur. Tracked in BabylonNative#1714.
+        const hasMips = texture.generateMipMaps;
         const nativeTextureFormat = getNativeTextureFormat(texture.format, texture.type);
         const isCube = texture.isCube;
         this._engine.initializeTexture(
