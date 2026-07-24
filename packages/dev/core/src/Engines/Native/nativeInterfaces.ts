@@ -156,7 +156,8 @@ export interface INativeEngine {
         generateDepthBuffer: boolean,
         samples: number,
         layer?: number,
-        mip?: number
+        mip?: number,
+        autoGenerateMips?: boolean
     ): NativeFramebuffer;
 
     createMultiFrameBuffer(

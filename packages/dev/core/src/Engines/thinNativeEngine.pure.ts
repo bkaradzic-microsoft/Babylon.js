@@ -3386,9 +3386,13 @@ export class ThinNativeEngine extends ThinEngine {
         // The native engine cannot render to all six faces through one framebuffer, so create one
         // framebuffer per face (the C++ side binds the matching cube layer); bindFramebuffer(faceIndex)
         // then selects the right one.
+        // generateMipMaps is forwarded as autoGenerateMips: a cube RTT that authors its own mip levels
+        // (HDR radiance prefiltering passes createMipMaps:true + generateMipMaps:false and renders one
+        // convolution per face+mip) must not have the chain regenerated from mip 0 when a face resolves,
+        // which would wipe every explicitly rendered roughness level.
         const framebuffers: NativeFramebuffer[] = [];
         for (let face = 0; face < 6; face++) {
-            framebuffers.push(this._engine.createFrameBuffer(nativeTexture, size, size, generateStencilBuffer, generateDepthBuffer, samples, face));
+            framebuffers.push(this._engine.createFrameBuffer(nativeTexture, size, size, generateStencilBuffer, generateDepthBuffer, samples, face, 0, generateMipMaps));
         }
 
         rtWrapper._framebuffers = framebuffers;
@@ -3935,7 +3939,8 @@ export class ThinNativeEngine extends ThinEngine {
                 nativeRTWrapper._generateDepthBuffer,
                 nativeRTWrapper.samples,
                 face,
-                mip
+                mip,
+                nativeRTWrapper.texture!.generateMipMaps
             );
             nativeRTWrapper._layerFramebuffers.set(key, framebuffer);
         }
