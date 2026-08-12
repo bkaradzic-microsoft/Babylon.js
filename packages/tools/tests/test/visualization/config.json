@@ -16,6 +16,14 @@
             "excludeFromPerformance": true
         },
         {
+            "title": "Gaussian Splatting LOD COMPOUND",
+            "playgroundId": "#418POI#21",
+            "renderCount": 15,
+            "referenceImage": "gsplat-lod-compound.png",
+            "dependsOn": ["GaussianSplatting", "Loaders", "SPLATLoader", "Textures"],
+            "excludeFromPerformance": true
+        },
+        {
             "title": "MSAA RTT samples=4 (magnified)",
             "playgroundId": "#DY1H5P#0",
             "referenceImage": "msaa-rtt-samples4-magnified.png",
@@ -215,6 +223,14 @@
             "excludeFromPerformance": true
         },
         {
+            "title": "Gaussian Splatting LOD SH and IBL Shadows",
+            "playgroundId": "#DAID4Q#11",
+            "renderCount": 15,
+            "referenceImage": "gsplat-lod-sh-ibl-shadows.png",
+            "dependsOn": ["GaussianSplatting", "Loaders", "PBR", "SPLATLoader", "Shadows", "Textures"],
+            "excludeFromPerformance": true
+        },
+        {
             "title": "Gaussian Splatting IBL Shadows Camera Switch",
             "playgroundId": "#DAID4Q#10",
             "renderCount": 15,
@@ -329,6 +345,13 @@
             "playgroundId": "#6RLCWP#20",
             "referenceImage": "msdf.png",
             "dependsOn": ["MSDFText"],
+            "excludeFromPerformance": true
+        },
+        {
+            "title": "Alpha-to-coverage transparent overlap",
+            "playgroundId": "#M4GBLK#0",
+            "referenceImage": "alpha-to-coverage-transparent-overlap.png",
+            "dependsOn": ["Engine", "Materials", "Meshes", "Shaders"],
             "excludeFromPerformance": true
         },
         {
@@ -3878,6 +3901,12 @@
         {
             "title": "OpenPBR IBL Specular IOR vs Coat Weight",
             "playgroundId": "#GRQHVV#182",
+            "excludedEngines": ["webgl1"],
+            "dependsOn": ["Lights", "PBR", "Textures"]
+        },
+        {
+            "title": "OpenPBR IBL Specular Weight vs Coat Weight",
+            "playgroundId": "#GRQHVV#328",
             "excludedEngines": ["webgl1"],
             "dependsOn": ["Lights", "PBR", "Textures"]
         },

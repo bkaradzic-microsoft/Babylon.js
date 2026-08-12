@@ -5,8 +5,10 @@
 import { NullEngine } from "core/Engines";
 import { Scene } from "core/scene";
 import { WebXRSessionManager } from "core/XR/webXRSessionManager";
+import { WebXRAbstractFeature } from "core/XR/features/WebXRAbstractFeature";
 import { WebXRFeaturesManager, WebXRFeatureName, type IWebXRFeature, type WebXRFeatureConstructor } from "core/XR/webXRFeaturesManager";
 import { Observable } from "core/Misc/observable";
+import { Logger } from "core/Misc/logger";
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 
 let featureCounter = 0;
@@ -54,6 +56,21 @@ function createMockFeatureConstructor(feature: IWebXRFeature): WebXRFeatureConst
     return (_xrSessionManager: WebXRSessionManager, _options?: any) => {
         return () => feature;
     };
+}
+
+class TestIntentionallyDisabledFeature extends WebXRAbstractFeature {
+    constructor(
+        sessionManager: WebXRSessionManager,
+        private readonly _warning: string
+    ) {
+        super(sessionManager);
+    }
+
+    public override isCompatible(): boolean {
+        return this._disableAutoAttach(this._warning);
+    }
+
+    protected override _onXRFrame(): void {}
 }
 
 describe("WebXRFeaturesManager – extended", () => {
@@ -226,11 +243,61 @@ describe("WebXRFeaturesManager – extended", () => {
             const name = uniqueFeatureName() as any;
             const mockFeature = createMockFeature({ isCompatible: vi.fn(() => false) });
             WebXRFeaturesManager.AddWebXRFeature(name, createMockFeatureConstructor(mockFeature), 1, true);
+            const warnSpy = vi.spyOn(Logger, "Warn").mockImplementation(() => {});
 
             const result = featuresManager.enableFeature(name, 1, undefined, true, false);
             expect(result).toBeDefined();
             // It should NOT be in the enabled features list since it's incompatible
             expect(featuresManager.getEnabledFeatures()).not.toContain(name);
+            expect(warnSpy).toHaveBeenCalledExactlyOnceWith(`Feature ${name} not compatible with the current environment/browser and was not enabled.`);
+            warnSpy.mockRestore();
+        });
+
+        it("does not duplicate the warning from an intentionally disabled incompatible optional feature", () => {
+            const name = uniqueFeatureName() as any;
+            const warning = "The feature was disabled because a runtime capability is unavailable.";
+            const feature = new TestIntentionallyDisabledFeature(sessionManager, warning);
+            WebXRFeaturesManager.AddWebXRFeature(name, createMockFeatureConstructor(feature), 1, true);
+            const warnSpy = vi.spyOn(Logger, "Warn").mockImplementation(() => {});
+
+            const result = featuresManager.enableFeature(name, 1, undefined, true, false);
+
+            expect(result).toBe(feature);
+            expect(featuresManager.getEnabledFeatures()).not.toContain(name);
+            expect(warnSpy).toHaveBeenCalledExactlyOnceWith(warning);
+            warnSpy.mockRestore();
+        });
+
+        it("warns generically when an incompatible optional feature silently disables auto-attach during compatibility", () => {
+            const name = uniqueFeatureName() as any;
+            const mockFeature = createMockFeature();
+            mockFeature.isCompatible = vi.fn(() => {
+                mockFeature.disableAutoAttach = true;
+                return false;
+            });
+            WebXRFeaturesManager.AddWebXRFeature(name, createMockFeatureConstructor(mockFeature), 1, true);
+            const warnSpy = vi.spyOn(Logger, "Warn").mockImplementation(() => {});
+
+            const result = featuresManager.enableFeature(name, 1, undefined, true, false);
+
+            expect(result).toBe(mockFeature);
+            expect(featuresManager.getEnabledFeatures()).not.toContain(name);
+            expect(warnSpy).toHaveBeenCalledExactlyOnceWith(`Feature ${name} not compatible with the current environment/browser and was not enabled.`);
+            warnSpy.mockRestore();
+        });
+
+        it("warns generically when an incompatible optional feature was already marked disableAutoAttach", () => {
+            const name = uniqueFeatureName() as any;
+            const mockFeature = createMockFeature({ disableAutoAttach: true, isCompatible: vi.fn(() => false) });
+            WebXRFeaturesManager.AddWebXRFeature(name, createMockFeatureConstructor(mockFeature), 1, true);
+            const warnSpy = vi.spyOn(Logger, "Warn").mockImplementation(() => {});
+
+            const result = featuresManager.enableFeature(name, 1, undefined, true, false);
+
+            expect(result).toBe(mockFeature);
+            expect(featuresManager.getEnabledFeatures()).not.toContain(name);
+            expect(warnSpy).toHaveBeenCalledExactlyOnceWith(`Feature ${name} not compatible with the current environment/browser and was not enabled.`);
+            warnSpy.mockRestore();
         });
 
         it("sets disableAutoAttach when attachIfPossible is false", () => {
@@ -331,6 +398,54 @@ describe("WebXRFeaturesManager – extended", () => {
         it("attachFeature does nothing for non-enabled feature", () => {
             // Should not throw
             featuresManager.attachFeature("nonexistent-feature");
+        });
+
+        it("warns generically when an ordinary attachment fails", () => {
+            const name = uniqueFeatureName() as any;
+            const mockFeature = createMockFeature({ attach: vi.fn(() => false) });
+            WebXRFeaturesManager.AddWebXRFeature(name, createMockFeatureConstructor(mockFeature), 1, true);
+            featuresManager.enableFeature(name, 1);
+            const warnSpy = vi.spyOn(Logger, "Warn").mockImplementation(() => {});
+
+            featuresManager.attachFeature(name);
+
+            expect(warnSpy).toHaveBeenCalledExactlyOnceWith(`Feature ${name} failed to attach`);
+            warnSpy.mockRestore();
+        });
+
+        it("does not suppress an ordinary failure when auto-attach was already disabled", () => {
+            const name = uniqueFeatureName() as any;
+            const mockFeature = createMockFeature({ attach: vi.fn(() => false), disableAutoAttach: true });
+            WebXRFeaturesManager.AddWebXRFeature(name, createMockFeatureConstructor(mockFeature), 1, true);
+            featuresManager.enableFeature(name, 1);
+            const warnSpy = vi.spyOn(Logger, "Warn").mockImplementation(() => {});
+
+            featuresManager.attachFeature(name);
+
+            expect(warnSpy).toHaveBeenCalledExactlyOnceWith(`Feature ${name} failed to attach`);
+            expect(mockFeature.disableAutoAttach).toBe(true);
+            warnSpy.mockRestore();
+        });
+
+        it("does not duplicate a specific warning when attachment intentionally disables auto-attach", () => {
+            const name = uniqueFeatureName() as any;
+            const warning = "The feature was disabled because a runtime capability is unavailable.";
+            const mockFeature = createMockFeature();
+            mockFeature.attach = vi.fn(() => {
+                Logger.Warn(warning);
+                mockFeature.disableAutoAttach = true;
+                return false;
+            });
+            WebXRFeaturesManager.AddWebXRFeature(name, createMockFeatureConstructor(mockFeature), 1, true);
+            featuresManager.enableFeature(name, 1);
+            const warnSpy = vi.spyOn(Logger, "Warn").mockImplementation(() => {});
+
+            featuresManager.attachFeature(name);
+            featuresManager.attachFeature(name);
+
+            expect(warnSpy).toHaveBeenCalledTimes(2);
+            expect(warnSpy.mock.calls).toEqual([[warning], [warning]]);
+            warnSpy.mockRestore();
         });
 
         it("detachFeature does nothing for non-enabled feature", () => {

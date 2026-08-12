@@ -4,7 +4,11 @@
 
 import { Constants } from "core/Engines/constants";
 import { NullEngine } from "core/Engines/nullEngine";
+import { WebGPURenderTargetWrapper } from "core/Engines/WebGPU/webgpuRenderTargetWrapper";
+import { FreeCamera } from "core/Cameras/freeCamera";
 import { InternalTexture, InternalTextureSource } from "core/Materials/Textures/internalTexture";
+import { Color4 } from "core/Maths/math.color";
+import { Vector3 } from "core/Maths/math.vector";
 import { Viewport } from "core/Maths/math.viewport";
 import { Scene } from "core/scene";
 import { CreateDefaultXRGPUProjectionLayerInit, WebXRWebGPUProjectionLayerWrapper } from "core/XR/features/Layers/WebXRWebGPUProjectionLayer";
@@ -47,14 +51,14 @@ describe("WebXRWebGPUProjectionLayer", () => {
         let wrapSpy: ReturnType<typeof vi.fn>;
         let updateSpy: ReturnType<typeof vi.fn>;
 
-        function createProvider(subImage: any) {
+        function createProvider(subImage: any, sessionMode: "immersive-vr" | "immersive-ar" = "immersive-vr") {
             const binding: any = {
                 getViewSubImage: vi.fn(() => subImage),
                 getSubImage: vi.fn(() => subImage),
             };
             const layer: any = { textureWidth: 512, textureHeight: 512 };
             const wrapper = new WebXRWebGPUProjectionLayerWrapper(layer, false, binding, "depth24plus-stencil8");
-            const sessionManager = { scene } as unknown as WebXRSessionManager;
+            const sessionManager = { scene, sessionMode } as unknown as WebXRSessionManager;
             return wrapper.createRenderTargetTextureProvider(sessionManager);
         }
 
@@ -103,6 +107,23 @@ describe("WebXRWebGPUProjectionLayer", () => {
 
             const depthTexture = wrappedTextures.find((texture) => texture.format === Constants.TEXTUREFORMAT_DEPTH24_STENCIL8);
             expect(depthTexture).toBeDefined();
+        });
+
+        it("marks the per-eye render target to skip the engine's render-target Y-flip", () => {
+            // XR projection-layer textures are presented directly by the XR compositor (top-left origin, never
+            // re-sampled), so the provider opts them out of the WebGPU engine's render-target Y-flip / winding
+            // compensation via the _disableEngineYFlip wrapper flag. Non-XR render targets must leave it false.
+            const provider = createProvider(createSubImage(512, 512));
+            const rtt = provider.getRenderTargetTextureForView({ eye: "left" } as XRView);
+
+            expect(rtt).not.toBeNull();
+            expect((rtt!.renderTarget as any)._disableEngineYFlip).toBe(true);
+
+            // Negative control. This asserts against a real WebGPURenderTargetWrapper rather than
+            // engine.createRenderTargetTexture(): under NullEngine that returns a base RenderTargetWrapper, which
+            // never declares the flag at all, so the assertion would pass vacuously against `undefined`.
+            const plainWrapper = new WebGPURenderTargetWrapper(false, false, 256, engine as any);
+            expect(plainWrapper._disableEngineYFlip).toBe(false);
         });
 
         it("repoints the wrapped textures instead of rebuilding when the size is unchanged", () => {
@@ -228,17 +249,68 @@ describe("WebXRWebGPUProjectionLayer", () => {
             expect(clearSpy).not.toHaveBeenCalled();
         });
 
-        it("the per-eye clear observer clears color only once per frame (guarded by _cleared)", () => {
+        it("clears immersive AR projection textures to transparent when scene.autoClear is disabled", () => {
+            const provider = createProvider(createSubImage(512, 512), "immersive-ar");
+            const rtt = provider.getRenderTargetTextureForView({ eye: "left" } as XRView);
+            scene.autoClear = false;
+
+            const clearSpy = vi.spyOn(engine, "clear");
+            rtt!.onClearObservable.notifyObservers(engine);
+
+            expect(clearSpy).toHaveBeenCalledWith(new Color4(0, 0, 0, 0), true, true, true);
+        });
+
+        it("the per-eye clear observer clears color only once per engine frame", () => {
             const provider = createProvider(createSubImage(512, 512));
             const rtt = provider.getRenderTargetTextureForView({ eye: "left" } as XRView);
 
             const clearSpy = vi.spyOn(engine, "clear");
-            // First notification in the frame: color is cleared (RTT starts uncleared).
+            // First notification in the frame: color is cleared.
             rtt!.onClearObservable.notifyObservers(engine);
             expect(clearSpy).toHaveBeenLastCalledWith(scene.clearColor, true, true, true);
-            // Second notification in the same frame (no per-frame reset): color clear is skipped, depth+stencil still cleared.
+            // Second notification in the same engine frame: color clear is skipped, depth+stencil still cleared.
             rtt!.onClearObservable.notifyObservers(engine);
             expect(clearSpy).toHaveBeenLastCalledWith(scene.clearColor, false, true, true);
+            // Next engine frame: color is cleared again.
+            engine.endFrame();
+            rtt!.onClearObservable.notifyObservers(engine);
+            expect(clearSpy).toHaveBeenLastCalledWith(scene.clearColor, true, true, true);
+        });
+
+        it("the per-eye clear observer does not re-clear color when a second scene renders through the same rig cameras", () => {
+            // Regression: UtilityLayerRenderer renders a second Scene through the same XR rig cameras within one
+            // XR frame. Every Scene.render calls Scene._checkCameraRenderTarget, which resets
+            // RenderTargetTexture._cleared for those cameras' targets, so a _cleared-based guard is defeated and
+            // the eye is re-cleared AFTER it was drawn - wiping the geometry while the clear color keeps
+            // presenting. This drives the real Scene code path rather than simulating the reset.
+            const provider = createProvider(createSubImage(512, 512));
+            const rtt = provider.getRenderTargetTextureForView({ eye: "left" } as XRView)!;
+
+            // Wire the target up the way webXRCamera does: the eye is a rig camera of the XR camera.
+            const xrCamera = new FreeCamera("xr", Vector3.Zero(), scene);
+            const eyeCamera = new FreeCamera("eye", Vector3.Zero(), scene);
+            eyeCamera.isRigCamera = true;
+            eyeCamera.outputRenderTarget = rtt;
+            xrCamera.rigCameras.push(eyeCamera);
+
+            const clearSpy = vi.spyOn(engine, "clear");
+
+            // The owning scene's pass over this eye: color is cleared, then the geometry is drawn.
+            (scene as any)._checkCameraRenderTarget(xrCamera);
+            (scene as any)._clearFrameBuffer(eyeCamera);
+            expect(clearSpy).toHaveBeenLastCalledWith(scene.clearColor, true, true, true);
+
+            // UtilityLayerRenderer's second scene, same engine frame, same rig cameras.
+            const utilityScene = new Scene(engine);
+            utilityScene.autoClear = false;
+            (utilityScene as any)._checkCameraRenderTarget(xrCamera);
+            expect(rtt._cleared).toBe(false); // the _cleared guard really is defeated by the second render
+
+            (utilityScene as any)._clearFrameBuffer(eyeCamera);
+            // Color must NOT be cleared again: that is what wiped the frame on device.
+            expect(clearSpy).toHaveBeenLastCalledWith(scene.clearColor, false, true, true);
+
+            utilityScene.dispose();
         });
 
         it("disposes the previous per-eye render target on a size change without leaking registry entries", () => {

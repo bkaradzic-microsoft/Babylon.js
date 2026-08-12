@@ -38,6 +38,7 @@ import { type DrawWrapper } from "../Materials/drawWrapper";
 import { WebGPUMaterialContext } from "./WebGPU/webgpuMaterialContext";
 import { WebGPUDrawContext } from "./WebGPU/webgpuDrawContext";
 import { WebGPUCacheBindGroups } from "./WebGPU/webgpuCacheBindGroups";
+import { WebGPUCacheTextureView } from "./WebGPU/webgpuCacheTextureView";
 import { WebGPUClearQuad } from "./WebGPU/webgpuClearQuad.pure";
 import { type IStencilState } from "../States/IStencilState";
 import { WebGPURenderItemBlendColor, WebGPURenderItemScissor, WebGPURenderItemStencilRef, WebGPURenderItemViewport, WebGPUBundleList } from "./WebGPU/webgpuBundleList";
@@ -328,6 +329,7 @@ export class WebGPUEngine extends ThinWebGPUEngine {
     /** @internal */
     public _cacheSampler: WebGPUCacheSampler;
     private _cacheBindGroups: WebGPUCacheBindGroups;
+    private _cacheTextureViews: WebGPUCacheTextureView;
     private _emptyVertexBuffer: VertexBuffer;
     /** @internal */
     public _mrtAttachments: number[];
@@ -605,7 +607,7 @@ export class WebGPUEngine extends ThinWebGPUEngine {
      * Gets the number of samples used by the current render target
      * @returns the current sample count, or 1 when multisampling is disabled
      */
-    public override get currentSampleCount(): number {
+    public get currentSampleCount(): number {
         return this._currentRenderTarget ? this._currentRenderTarget.samples : this._mainPassSampleCount;
     }
 
@@ -829,6 +831,7 @@ export class WebGPUEngine extends ThinWebGPUEngine {
                     this._textureHelper = new WebGPUTextureManager(this, this._device, this._bufferManager, this._deviceEnabledExtensions);
                     this._cacheSampler = new WebGPUCacheSampler(this._device);
                     this._cacheBindGroups = new WebGPUCacheBindGroups(this._device, this._cacheSampler, this);
+                    this._cacheTextureViews = new WebGPUCacheTextureView();
                     this._timestampQuery = new WebGPUTimestampQuery(this, this._device, this._bufferManager);
                     this._occlusionQuery = (this._device as any).createQuerySet ? new WebGPUOcclusionQuery(this, this._device, this._bufferManager) : (undefined as any);
                     this._bundleList = new WebGPUBundleList(this._device);
@@ -1379,7 +1382,6 @@ export class WebGPUEngine extends ThinWebGPUEngine {
 
             this._alphaState.reset();
             this._resetAlphaMode();
-            this._cacheRenderPipeline.setAlphaToCoverage(this._alphaState.alphaToCoverage);
             this._cacheRenderPipeline.setAlphaBlendFactors(this._alphaState._blendFunctionParameters, this._alphaState._blendEquationParameters);
             this._cacheRenderPipeline.setAlphaBlendEnabled(this._alphaState._alphaBlend, this._alphaState._numTargetEnabled);
 
@@ -1406,15 +1408,6 @@ export class WebGPUEngine extends ThinWebGPUEngine {
      */
     public override getColorWrite(): boolean {
         return this._colorWriteLocal;
-    }
-
-    /**
-     * Enable or disable alpha-to-coverage
-     * @param enable defines the state to set
-     */
-    public override setAlphaToCoverage(enable: boolean): void {
-        super.setAlphaToCoverage(enable);
-        this._cacheRenderPipeline.setAlphaToCoverage(enable);
     }
 
     //------------------------------------------------------------------------------
@@ -3233,12 +3226,12 @@ export class WebGPUEngine extends ThinWebGPUEngine {
         if (useMSAA) {
             const gpuMSAATexture = gpuDepthStencilWrapper?.getMSAATexture(sampleCount);
 
-            depthStencilView = gpuMSAATexture?.createView(this._rttRenderPassWrapper.depthAttachmentViewDescriptor!);
+            depthStencilView = gpuMSAATexture ? this._cacheTextureViews.getView(gpuMSAATexture, this._rttRenderPassWrapper.depthAttachmentViewDescriptor!) : undefined;
             format = gpuMSAATexture?.format;
         }
 
         if (!depthStencilView && gpuDepthStencilTexture) {
-            depthStencilView = gpuDepthStencilTexture.createView(this._rttRenderPassWrapper.depthAttachmentViewDescriptor!);
+            depthStencilView = this._cacheTextureViews.getView(gpuDepthStencilTexture, this._rttRenderPassWrapper.depthAttachmentViewDescriptor!);
         }
 
         if (!format && gpuDepthStencilWrapper) {
@@ -3295,8 +3288,8 @@ export class WebGPUEngine extends ThinWebGPUEngine {
                     };
                     const isRtInteger = mrtTexture.type === Constants.TEXTURETYPE_UNSIGNED_INTEGER || mrtTexture.type === Constants.TEXTURETYPE_UNSIGNED_SHORT;
 
-                    const colorTextureView = gpuMRTTexture.createView(viewDescriptor);
-                    const colorMSAATextureView = gpuMSAATexture?.createView(msaaViewDescriptor);
+                    const colorTextureView = this._cacheTextureViews.getView(gpuMRTTexture, viewDescriptor);
+                    const colorMSAATextureView = gpuMSAATexture ? this._cacheTextureViews.getView(gpuMSAATexture, msaaViewDescriptor) : undefined;
 
                     colorAttachments.push({
                         view: colorMSAATextureView ? colorMSAATextureView : colorTextureView,
@@ -3326,8 +3319,10 @@ export class WebGPUEngine extends ThinWebGPUEngine {
                 }
 
                 const gpuMSAATexture = useMSAA ? gpuWrapper.getMSAATexture(sampleCount, layerIndex) : undefined;
-                const colorTextureView = gpuTexture.createView(this._rttRenderPassWrapper.colorAttachmentViewDescriptor!);
-                const colorMSAATextureView = gpuMSAATexture?.createView(this._rttRenderPassWrapper.colorAttachmentViewDescriptor!);
+                const colorTextureView = this._cacheTextureViews.getView(gpuTexture, this._rttRenderPassWrapper.colorAttachmentViewDescriptor!);
+                const colorMSAATextureView = gpuMSAATexture
+                    ? this._cacheTextureViews.getView(gpuMSAATexture, this._rttRenderPassWrapper.colorAttachmentViewDescriptor!)
+                    : undefined;
                 const isRtInteger = internalTexture.type === Constants.TEXTURETYPE_UNSIGNED_INTEGER || internalTexture.type === Constants.TEXTURETYPE_UNSIGNED_SHORT;
 
                 colorAttachments.push({
@@ -3727,7 +3722,12 @@ export class WebGPUEngine extends ThinWebGPUEngine {
         this.setZOffsetUnits(zOffsetUnits);
 
         // Front face
-        const frontFace = reverseSide ? (this._currentRenderTarget ? 1 : 2) : this._currentRenderTarget ? 2 : 1;
+        // Render targets are drawn Y-flipped (see the InternalsUBO yFactor in _draw), so their triangle
+        // winding is reversed here to compensate and keep the same faces visible. XR projection-layer targets
+        // opt out of that flip (_disableEngineYFlip) because the compositor presents them directly, so they
+        // keep the main-framebuffer winding.
+        const invertYRenderTarget = !!this._currentRenderTarget && !(this._currentRenderTarget as WebGPURenderTargetWrapper)._disableEngineYFlip;
+        const frontFace = reverseSide ? (invertYRenderTarget ? 1 : 2) : invertYRenderTarget ? 2 : 1;
         if (this._depthCullingState.frontFace !== frontFace || force) {
             this._depthCullingState.frontFace = frontFace;
         }
@@ -3761,7 +3761,11 @@ export class WebGPUEngine extends ThinWebGPUEngine {
 
         const webgpuPipelineContext = this._currentEffect!._pipelineContext as WebGPUPipelineContext;
 
-        this.bindUniformBufferBase(this._currentRenderTarget ? this._ubInvertY : this._ubDontInvertY, 0, WebGPUShaderProcessor.InternalsUBOName);
+        // Render targets are rendered Y-flipped (yFactor = -1) so a later-sampled RTT matches the WebGL
+        // texture-space convention. XR projection-layer targets (_disableEngineYFlip) are presented directly by
+        // the compositor and must be rendered upright, so they use the non-inverting UBO like the canvas.
+        const invertYRenderTarget = !!this._currentRenderTarget && !(this._currentRenderTarget as WebGPURenderTargetWrapper)._disableEngineYFlip;
+        this.bindUniformBufferBase(invertYRenderTarget ? this._ubInvertY : this._ubDontInvertY, 0, WebGPUShaderProcessor.InternalsUBOName);
 
         this._currentDrawContext.setVertexPulling(
             this._currentMaterialContext.useVertexPulling,
@@ -4025,7 +4029,7 @@ export class WebGPUEngine extends ThinWebGPUEngine {
      */
     public override dispose(): void {
         this._isDisposed = true;
-        this.hideLoadingUI();
+        this.hideLoadingUI?.();
         this._timestampQuery.dispose();
         this._mainTexture?.destroy();
         this._depthTexture?.destroy();

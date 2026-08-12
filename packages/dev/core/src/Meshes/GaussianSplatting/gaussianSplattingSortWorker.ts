@@ -42,6 +42,8 @@ export const GaussianSplattingSortWorkerCommand = {
  */
 export const GaussianSplattingSortWorker = function (self: Worker) {
     let positions: Float32Array;
+    // Real (unpadded) splat count backing `positions` — see emptySplatIndex below for why this matters.
+    let vertexCount = 0;
     let depthMix: BigInt64Array;
     let partIndices: Uint8Array;
     let partMatrices: Float32Array[];
@@ -61,6 +63,7 @@ export const GaussianSplattingSortWorker = function (self: Worker) {
         const command = e.data.command;
         if (command === "positions") {
             positions = e.data.positions;
+            vertexCount = e.data.vertexCount;
         } else if (command === "positionsUpdate") {
             // Patch only the changed sub-range in place, avoiding a full re-copy/transfer of the entire
             // (potentially hundreds-of-MB) position buffer on every streamed LOD decode.
@@ -107,6 +110,11 @@ export const GaussianSplattingSortWorker = function (self: Worker) {
             // but fall back to "all source splats" if a sort somehow arrives before it.
             const activeIntervals = intervals;
             const totalSplats = positions.length / 4;
+            // Index to use when 16-aligning the sorted output needs extra filler entries. Real data never
+            // lives at or past `vertexCount` — with or without range filtering — and `_getTextureSize`
+            // (gaussianSplattingMeshBase.pure.ts) always reserves at least one empty slot there, even when
+            // `vertexCount` would otherwise exactly fill every texture row.
+            const emptySplatIndex = vertexCount;
             let renderSplatCount = totalSplats;
             if (activeIntervals) {
                 renderSplatCount = 0;
@@ -150,7 +158,8 @@ export const GaussianSplattingSortWorker = function (self: Worker) {
                     // Compound (rig) meshes give each splat its own world transform via its part: depth uses the
                     // splat's part coefficients. Single meshes use the one global world matrix. Both produce
                     // depths in the same camera-forward space, so all active splats sort together correctly.
-                    const compound = !!(partMatrices && partIndices);
+                    // Require a non-empty partIndices: an empty one (length 0) would make partLen-1 index -1 below.
+                    const compound = !!(partMatrices && partMatrices.length > 0 && partIndices && partIndices.length > 0);
                     let depthCoeffs: number[][] = [];
                     let partLen = 0;
                     let a = 0;
@@ -181,14 +190,26 @@ export const GaussianSplattingSortWorker = function (self: Worker) {
                     let writeIndex = 0;
                     let minDepth = Infinity;
                     let maxDepth = -Infinity;
+                    // A partIndices entry >= partCount means partIndices and partMatrices disagree — an inconsistent
+                    // snapshot posted mid-rebuild.
+                    const partCount = depthCoeffs.length;
+                    let inconsistentSnapshot = false;
                     const rangeWords = activeIntervals ? activeIntervals.length : 2;
-                    for (let r = 0; r < rangeWords; r += 2) {
+                    gather: for (let r = 0; r < rangeWords; r += 2) {
                         const start = activeIntervals ? activeIntervals[r] : 0;
                         const end = start + (activeIntervals ? activeIntervals[r + 1] : totalSplats);
                         if (compound) {
                             for (let sourceIndex = start; sourceIndex < end; sourceIndex++) {
                                 const o = 4 * sourceIndex;
-                                const coeff = depthCoeffs[partIndices[sourceIndex < partLen ? sourceIndex : partLen - 1]];
+                                const rawPart = partIndices[sourceIndex < partLen ? sourceIndex : partLen - 1];
+                                if (rawPart >= partCount) {
+                                    // Reject rather than sort with the wrong transform: the output buffer is untouched
+                                    // until the scatter pass below, so returning it as-is keeps the last good order and
+                                    // the next frame retries once the snapshot is consistent.
+                                    inconsistentSnapshot = true;
+                                    break gather;
+                                }
+                                const coeff = depthCoeffs[rawPart];
                                 const depth = coeff[0] * positions[o] + coeff[1] * positions[o + 1] + coeff[2] * positions[o + 2] + coeff[3];
                                 sortSourceIndices[writeIndex] = sourceIndex;
                                 sortDepths[writeIndex] = depth;
@@ -215,6 +236,11 @@ export const GaussianSplattingSortWorker = function (self: Worker) {
                                 }
                             }
                         }
+                    }
+
+                    if (inconsistentSnapshot) {
+                        self.postMessage({ command: "sorted", depthMix, cameraId, sortRequestId, rangeVersion }, [depthMix.buffer]);
+                        return;
                     }
 
                     // Counting (radix) sort by a depth-derived integer key — O(n) vs the legacy comparison sort.
@@ -260,9 +286,13 @@ export const GaussianSplattingSortWorker = function (self: Worker) {
                         outIndices[2 * dest] = sortSourceIndices[k];
                     }
 
-                    // Pad the remainder up to the 16-multiple with the reserved (invisible) splat index 0.
+                    // Pad the remainder up to the 16-multiple with a guaranteed-empty index (see
+                    // emptySplatIndex above) — NOT splat index 0, which is just the first real splat of
+                    // whatever source data was loaded. Padding with a real, opaque splat draws it an extra
+                    // 15 times at the very end of the (back-to-front) draw order — i.e. always on top,
+                    // regardless of camera.
                     for (let dest = renderSplatCount; dest < vertexCountPadded; dest++) {
-                        outIndices[2 * dest] = 0;
+                        outIndices[2 * dest] = emptySplatIndex;
                     }
                 } else {
                     // ===== Legacy comparison sort: pack (index, ~depthBits) into each 64-bit lane and sort it =====
@@ -279,9 +309,10 @@ export const GaussianSplattingSortWorker = function (self: Worker) {
                                 indices[2 * writeIndex++] = sourceIndex;
                             }
                         }
-                        // Pad up to a multiple of 16 with the reserved (invisible) splat index 0.
+                        // Pad up to a multiple of 16. Splat index 0 isn't guaranteed invisible (see the
+                        // counting-sort branch above) — use the same guaranteed-empty index instead.
                         for (; writeIndex < vertexCountPadded; writeIndex++) {
-                            indices[2 * writeIndex] = 0;
+                            indices[2 * writeIndex] = emptySplatIndex;
                         }
                     } else {
                         for (let j = 0; j < vertexCountPadded; j++) {
@@ -289,15 +320,21 @@ export const GaussianSplattingSortWorker = function (self: Worker) {
                         }
                     }
 
-                    if (partMatrices && partIndices) {
+                    let inconsistentSnapshot = false;
+                    if (partMatrices && partMatrices.length > 0 && partIndices && partIndices.length > 0) {
                         // Precompute depth coefficients for each rig node.
                         const depthCoeffs = partMatrices.map((m) => computeDepthCoeffs(m));
-                        // NB: For performance reasons, we assume that part indices are valid.
                         const length = partIndices.length;
                         for (let j = 0; j < vertexCountPadded; j++) {
                             const sourceIndex = indices[2 * j];
                             // NB: We need this 'min' because the vertex array is padded, not partIndices.
                             const partIndex = partIndices[Math.min(sourceIndex, length - 1)];
+                            if (partIndex >= depthCoeffs.length) {
+                                // Inconsistent snapshot (see the counting-sort branch): skip the sort rather than depth
+                                // splats with the wrong transform; the unsorted indices render for one frame, then retry.
+                                inconsistentSnapshot = true;
+                                break;
+                            }
                             const coeff = depthCoeffs[partIndex];
                             floatMix[2 * j + 1] =
                                 coeff[0] * positions[4 * sourceIndex + 0] + coeff[1] * positions[4 * sourceIndex + 1] + coeff[2] * positions[4 * sourceIndex + 2] + coeff[3];
@@ -313,7 +350,9 @@ export const GaussianSplattingSortWorker = function (self: Worker) {
                         }
                     }
 
-                    depthMix.sort();
+                    if (!inconsistentSnapshot) {
+                        depthMix.sort();
+                    }
                 }
             } catch (sortError) {
                 // Transient data inconsistency (e.g. partIndices/partMatrices mismatch during addPart/removePart rebuild).
