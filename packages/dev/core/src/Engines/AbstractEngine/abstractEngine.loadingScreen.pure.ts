@@ -51,7 +51,10 @@ export function RegisterAbstractEngineLoadingScreen(): void {
 
     Object.defineProperty(AbstractEngine.prototype, "loadingUIText", {
         set: function (this: AbstractEngine, value: string) {
-            this.loadingScreen.loadingUIText = value;
+            const loadingScreen = this.loadingScreen;
+            if (loadingScreen) {
+                loadingScreen.loadingUIText = value;
+            }
         },
         enumerable: true,
         configurable: true,
@@ -59,7 +62,10 @@ export function RegisterAbstractEngineLoadingScreen(): void {
 
     Object.defineProperty(AbstractEngine.prototype, "loadingUIBackgroundColor", {
         set: function (this: AbstractEngine, value: string) {
-            this.loadingScreen.loadingUIBackgroundColor = value;
+            const loadingScreen = this.loadingScreen;
+            if (loadingScreen) {
+                loadingScreen.loadingUIBackgroundColor = value;
+            }
         },
         enumerable: true,
         configurable: true,
