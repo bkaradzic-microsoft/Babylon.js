@@ -3916,13 +3916,21 @@ export class ThinNativeEngine extends ThinEngine {
         }
 
         if (nativeRTWrapper._framebuffers) {
+            // _framebuffers is indexed by cube face for cube render targets, but by array layer for 2D-array
+            // render targets (cascaded shadow maps, the atmosphere aerial-perspective LUT). Callers pass the
+            // face in `faceIndex` and the array slice in `layer`, so pick whichever applies to this wrapper;
+            // indexing a layered target by `faceIndex` bound slice 0 for every layer and left slices 1..N-1
+            // unwritten.
+            const isCubeTarget = nativeRTWrapper.isCube;
+            const framebufferIndex = isCubeTarget ? faceIndex ?? 0 : layer || faceIndex || 0;
+
             // Cube render target: bind the framebuffer for the requested face. HDR prefiltering renders each
             // roughness level into its own mip, so for lodLevel > 0 lazily build/cache a per-(face, mip)
             // framebuffer; the pre-built _framebuffers array only targets mip 0.
-            if (lodLevel) {
+            if (lodLevel && isCubeTarget) {
                 this._bindUnboundFramebuffer(this._getCubeFaceMipFramebuffer(nativeRTWrapper, faceIndex ?? 0, lodLevel));
             } else {
-                this._bindUnboundFramebuffer(nativeRTWrapper._framebuffers[faceIndex ?? 0]);
+                this._bindUnboundFramebuffer(nativeRTWrapper._framebuffers[Math.min(framebufferIndex, nativeRTWrapper._framebuffers.length - 1)]);
             }
         } else if (faceIndex) {
             throw new Error("Cuboid frame buffers are not yet supported in NativeEngine.");
