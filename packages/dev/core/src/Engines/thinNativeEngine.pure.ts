@@ -247,6 +247,12 @@ class CommandBufferEncoder {
 const remappedAttributesNames: string[] = [];
 
 /**
+ * Sentinel for "no attachment masking": every color attachment of the bound framebuffer takes part in
+ * the clear. Native treats this value specially and skips the bgfx color-palette clear path.
+ */
+const _AllAttachmentsMask = 0xff;
+
+/**
  * Expands a single cube face of 3-component (RGB) pixel data into 4-component (RGBA) data, mirroring the
  * WebGL raw-cube upload. Native has no 3-component float texture format, so HDR/`.env` RGB float faces must
  * be widened to RGBA before being uploaded through updateTextureData.
@@ -333,7 +339,7 @@ function _DownsampleRgbaTextureData(data: ArrayBufferView, width: number, height
 /** @internal */
 export class ThinNativeEngine extends ThinEngine {
     // This must match the protocol version in NativeEngine.cpp
-    private static readonly PROTOCOL_VERSION = 9;
+    private static readonly PROTOCOL_VERSION = 10;
 
     /** @internal */
     public static _createNativeDataStream(): NativeDataStream {
@@ -352,6 +358,11 @@ export class ThinNativeEngine extends ThinEngine {
     private _computeUniformBridge: WeakMap<UniformBuffer, NativeDataBuffer>;
     private _frameStats: NativeFrameStats;
     private _boundBuffersVertexArray: any;
+    /**
+     * Bit i is set when color attachment i is selected by the last bindAttachments() call.
+     * Only used to mask clears (see bindAttachments).
+     */
+    private _clearAttachmentMask: number;
     private _currentDepthTest: number;
     private _depthTestEnabled: boolean;
     private _stencilTest: boolean;
@@ -428,6 +439,7 @@ export class ThinNativeEngine extends ThinEngine {
         this._frameGraphDepthWrappers = new Map();
         this._frameStats = { gpuTimeNs: Number.NaN };
         this._boundBuffersVertexArray = null;
+        this._clearAttachmentMask = _AllAttachmentsMask;
         this._compiledComputeEffects = {};
         this._computeUniformBridge = new WeakMap();
         this._currentDepthTest = _native.Engine.DEPTH_TEST_LEQUAL;
@@ -768,6 +780,10 @@ export class ThinNativeEngine extends ThinEngine {
             }
 
             this._currentFramebuffer = framebuffer;
+
+            // drawBuffers state is per-framebuffer on WebGL, so a framebuffer switch resets the
+            // attachment selection back to "every attachment".
+            this._clearAttachmentMask = _AllAttachmentsMask;
         }
     }
 
@@ -802,6 +818,7 @@ export class ThinNativeEngine extends ThinEngine {
         this._commandBufferEncoder.encodeCommandArgAsFloat32(depth && this.useReverseDepthBuffer ? 0 : 1);
         this._commandBufferEncoder.encodeCommandArgAsUInt32(stencil ? 1 : 0);
         this._commandBufferEncoder.encodeCommandArgAsUInt32(stencilClearValue);
+        this._commandBufferEncoder.encodeCommandArgAsUInt32(this._clearAttachmentMask);
         this._commandBufferEncoder.finishEncodingCommand();
     }
 
@@ -3663,9 +3680,22 @@ export class ThinNativeEngine extends ThinEngine {
         // so this is a no-op on Native.
     }
 
-    public override bindAttachments(_attachments: number[]): void {
-        // No-op on Native: bgfx renders to every color attachment of the bound framebuffer, so there is
-        // no gl.drawBuffers equivalent to select a subset.
+    public override bindAttachments(attachments: number[]): void {
+        // bgfx has no gl.drawBuffers equivalent, so draw calls always write to every color attachment of
+        // the bound framebuffer. Clears, however, can be masked per attachment (bgfx clear color palette),
+        // and code such as PrePassRenderer._clear() relies on that: it clears the non-default attachments
+        // to zero and then lets the scene clear only the default one. Record the selection so the next
+        // clear() can honour it.
+        let mask = 0;
+        for (let i = 0; i < attachments.length; i++) {
+            if (attachments[i] >= 0) {
+                mask |= 1 << i;
+            }
+        }
+
+        // A selection covering every attachment needs no masking (and lets the backend take the cheaper
+        // non-palette clear path).
+        this._clearAttachmentMask = mask === (1 << attachments.length) - 1 ? _AllAttachmentsMask : mask;
     }
 
     public override buildTextureLayout(textureStatus: boolean[], _backBufferLayout = false): number[] {
@@ -3679,11 +3709,13 @@ export class ThinNativeEngine extends ThinEngine {
     }
 
     public override restoreSingleAttachment(): void {
-        // No-op on Native (see bindAttachments).
+        // Back to the single-attachment back buffer: no masking (see bindAttachments).
+        this._clearAttachmentMask = _AllAttachmentsMask;
     }
 
     public override restoreSingleAttachmentForRenderTarget(): void {
-        // No-op on Native (see bindAttachments).
+        // Back to a single-attachment render target: no masking (see bindAttachments).
+        this._clearAttachmentMask = _AllAttachmentsMask;
     }
 
     public override generateMipMapsMultiFramebuffer(_texture: RenderTargetWrapper): void {
