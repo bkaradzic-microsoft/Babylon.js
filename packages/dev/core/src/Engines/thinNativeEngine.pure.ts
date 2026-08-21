@@ -4683,9 +4683,38 @@ export class ThinNativeEngine extends ThinEngine {
     }
 
     public override getFontOffset(font: string): { ascent: number; height: number; descent: number } {
-        // TODO
-        const result = { ascent: 0, height: 0, descent: 0 };
-        return result;
+        // GUI sizes every line of text from this (Control._GetFontOffset -> TextBlock line height,
+        // resizeToFit, InputText caret/selection), so the previous { 0, 0, 0 } stub collapsed every
+        // TextBlock/InputText to a single zero-height line stacked at the same y. There is no DOM to
+        // measure against here, so mirror the WebGL engine's DOM-less path (GetFontOffsetFromCanvas)
+        // and measure "Hg" through the native Canvas2D polyfill, which uses the same font that
+        // fillText will actually draw with. Results are cached per font string by the GUI caller.
+        try {
+            const canvas = this.createCanvas(64, 64);
+            const context = canvas.getContext("2d");
+            context.font = font;
+            const metrics = context.measureText("Hg") as unknown as {
+                actualBoundingBoxAscent?: number;
+                actualBoundingBoxDescent?: number;
+                fontBoundingBoxAscent?: number;
+                fontBoundingBoxDescent?: number;
+            };
+            const ascent = Number(metrics.actualBoundingBoxAscent ?? metrics.fontBoundingBoxAscent);
+            const descent = Number(metrics.actualBoundingBoxDescent ?? metrics.fontBoundingBoxDescent);
+            if (isFinite(ascent) && isFinite(descent) && ascent + descent > 0) {
+                return { ascent, height: ascent + descent, descent };
+            }
+        } catch {
+            // Fall through to the size-derived approximation below.
+        }
+
+        // No canvas or an unmeasurable font: approximate from the CSS px size the same way the
+        // shared GetFallbackFontOffset does, so text still gets a sane non-zero line height.
+        const match = /(?:^|\s)([0-9]+(?:\.[0-9]+)?)px(?:\/|\s|$)/.exec(String(font || ""));
+        const size = Math.max(1, match ? parseFloat(match[1]) : 12);
+        const ascent = size * 0.8;
+        const descent = size * 0.2;
+        return { ascent, height: ascent + descent, descent };
     }
 
     /**
