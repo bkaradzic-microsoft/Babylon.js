@@ -46,6 +46,21 @@ export function RegisterNativeEngineCubeTexture(): void {
         texture._lodGenerationOffset = lodOffset;
         texture._useSRGBBuffer = this._getUseSRGBBuffer(useSRGBBuffer, !!noMipmap);
 
+        // Reflection LOD selection is driven by log2(vReflectionMicrosurfaceInfos.x), which comes straight
+        // from BaseTexture.getSize(). Leaving width/height at 0 yields log2(0) = -Infinity, so every
+        // LOD-based blur (BackgroundMaterial.reflectionBlur, PBR getLodFromAlphaG, ...) collapses to
+        // level 0 and reflections render fully sharp. The native engine knows the real face size once the
+        // container has been parsed, so read it back on load.
+        const updateSizeFromNativeTexture = () => {
+            const underlyingResource = texture._hardwareTexture?.underlyingResource;
+            if (underlyingResource) {
+                texture.baseWidth = this._engine.getTextureWidth(underlyingResource);
+                texture.baseHeight = this._engine.getTextureHeight(underlyingResource);
+                texture.width = texture.baseWidth;
+                texture.height = texture.baseHeight;
+            }
+        };
+
         if (!this._doNotHandleContextLost) {
             texture._extension = forcedExtension;
             texture._files = files;
@@ -132,6 +147,7 @@ export function RegisterNativeEngineCubeTexture(): void {
                 // eslint-disable-next-line github/no-then
                 .then(
                     () => {
+                        updateSizeFromNativeTexture();
                         texture.isReady = true;
                         if (onLoad) {
                             onLoad();
@@ -184,6 +200,7 @@ export function RegisterNativeEngineCubeTexture(): void {
                 // eslint-disable-next-line github/no-then
                 .then(
                     () => {
+                        updateSizeFromNativeTexture();
                         texture.isReady = true;
                         if (onLoad) {
                             onLoad();
