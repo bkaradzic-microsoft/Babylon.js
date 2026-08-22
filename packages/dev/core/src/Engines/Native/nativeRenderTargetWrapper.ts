@@ -1,4 +1,5 @@
 import { type Nullable } from "../../types";
+import { type InternalTexture } from "../../Materials/Textures/internalTexture";
 import { type TextureSize } from "../../Materials/Textures/textureCreationOptions";
 import { RenderTargetWrapper } from "../renderTargetWrapper";
 import { type NativeFramebuffer } from "./nativeInterfaces";
@@ -72,6 +73,34 @@ export class NativeRenderTargetWrapper extends RenderTargetWrapper {
     constructor(isMulti: boolean, isCube: boolean, size: TextureSize, engine: ThinNativeEngine) {
         super(isMulti, isCube, size, engine);
         this._engine = engine;
+    }
+
+    /**
+     * Attaches a texture to one of the color attachments of this render target.
+     * @param texture The texture to attach
+     * @param index The index of the color attachment
+     * @param disposePrevious Whether to dispose the texture currently attached at this index
+     */
+    public override setTexture(texture: InternalTexture, index: number = 0, disposePrevious: boolean = true): void {
+        const previous = this.textures?.[index];
+
+        super.setTexture(texture, index, disposePrevious);
+
+        if (previous === texture) {
+            return;
+        }
+
+        // A frame graph framebuffer is built lazily, once, from the wrapper's attachment list (see
+        // ThinNativeEngine._buildFrameGraphFramebuffer) and does not track later attachment changes. The frame
+        // graph swaps the ping/pong textures of a history texture (TAA, IBL shadows accumulation, ...) through
+        // setTexture on every frame, so the framebuffer must be dropped here: otherwise the pass keeps rendering
+        // into the texture the framebuffer was originally built from, the read texture is never written and the
+        // history stays black. Dropping it makes the next bind rebuild it against the texture actually written
+        // this frame. Only frame graph framebuffers are invalidated; other wrappers own a framebuffer that is
+        // built eagerly and is never rebuilt on bind.
+        if (this.__framebuffer && this._engine._isFrameGraphFramebuffer(this.__framebuffer)) {
+            this._framebuffer = null;
+        }
     }
 
     public override dispose(disposeOnlyFramebuffers = false): void {

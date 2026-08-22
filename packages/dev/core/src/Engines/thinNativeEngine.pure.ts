@@ -2840,6 +2840,17 @@ export class ThinNativeEngine extends ThinEngine {
         }
     }
 
+    /**
+     * Returns true when the given framebuffer was built by the frame graph path (_buildFrameGraphFramebuffer),
+     * i.e. it is reference-counted, shared between wrappers and rebuilt lazily on bind.
+     * @param framebuffer The framebuffer to test
+     * @returns true if the framebuffer is a frame graph framebuffer
+     * @internal
+     */
+    public _isFrameGraphFramebuffer(framebuffer: NativeFramebuffer): boolean {
+        return this._frameGraphFramebufferRefCount.has(framebuffer);
+    }
+
     // Reference counts + metadata for framebuffers shared across frame graph render-target wrappers
     // are stored in _frameGraphFramebufferRefCount (declared with the other engine fields).
 
