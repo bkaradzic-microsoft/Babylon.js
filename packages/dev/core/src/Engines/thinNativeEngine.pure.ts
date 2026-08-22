@@ -795,6 +795,23 @@ export class ThinNativeEngine extends ThinEngine {
         return null;
     }
 
+    public override beginFrame(): void {
+        // WebGL resets the drawing buffer (colour, depth and stencil) before every frame unless
+        // preserveDrawingBuffer is set, so a draw targeting the default framebuffer always starts against
+        // a depth buffer of 1 (0 with a reverse depth buffer). The native backend keeps the back buffer's
+        // depth/stencil attachment across frames, so anything that depth-tests against the screen is
+        // compared with whatever the previous frame left behind -- and when nothing ever clears the back
+        // buffer (frame graph scenes render the whole scene into textures and only the final task targets
+        // the screen) that is the zero-initialized surface, which rejects every fragment with the default
+        // LESS/LEQUAL comparison. Reset it here to match the WebGL drawing buffer semantics. The colour is
+        // deliberately left alone: scenes clear it themselves when they mean to, and wiping it here would
+        // blank the screen for content that is only redrawn on some frames.
+        if (!this._currentRenderTarget) {
+            this.clear(null, false, true, true);
+        }
+        super.beginFrame();
+    }
+
     public override clear(color: Nullable<IColor4Like>, backBuffer: boolean, depth: boolean, stencil: boolean = false, stencilClearValue = 0): void {
         if (depth && this.useReverseDepthBuffer) {
             // Reverse-Z: the scene is rendered with a flipped projection (near maps to 1, far to 0), so the
