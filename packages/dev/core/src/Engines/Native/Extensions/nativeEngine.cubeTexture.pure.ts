@@ -141,7 +141,15 @@ export function RegisterNativeEngineCubeTexture(): void {
                 // eslint-disable-next-line github/no-then
                 .then(async (data) => {
                     return await new Promise<void>((resolve, reject) => {
-                        this._engine.loadCubeTexture(texture._hardwareTexture!.underlyingResource, data, !noMipmap, true, texture._useSRGBBuffer, () => resolve(), reject);
+                        this._engine.loadCubeTexture(
+                            texture._hardwareTexture!.underlyingResource,
+                            data,
+                            !noMipmap,
+                            true,
+                            texture._useSRGBBuffer,
+                            () => resolve(),
+                            () => reject(new Error("Native engine failed to load the cubemap faces"))
+                        );
                     });
                 })
                 // eslint-disable-next-line github/no-then
@@ -155,17 +163,17 @@ export function RegisterNativeEngineCubeTexture(): void {
                     },
                     (error) => {
                         if (onError) {
-                            onError(`Failed to load cubemap: ${error?.message}`, error);
+                            onError(`Failed to load cubemap: ${error?.message ?? String(error)}`, error);
                         }
                     }
                 );
-        } else {
+        } else if (!files || files.length <= 1) {
             // Self-contained single-file cubemap container (.dds / .ktx / .ktx2) that already holds
             // all six faces (and their prefiltered mip chain). Load the single buffer and hand it to
             // the native engine, which parses the container directly and returns the diffuse spherical
             // harmonics (as a 27-float SphericalPolynomial) so PBR irradiance matches the web engines.
             const singleUrl = files && files.length > 0 ? files[0] : rootUrl;
-            // eslint-disable-next-line github/no-then
+
             this._loadFileAsync(singleUrl, undefined, true)
                 // eslint-disable-next-line github/no-then
                 .then(async (data) => {
@@ -193,7 +201,7 @@ export function RegisterNativeEngineCubeTexture(): void {
                                 }
                                 resolve();
                             },
-                            reject
+                            () => reject(new Error(`Native engine failed to parse the cubemap container '${singleUrl}'`))
                         );
                     });
                 })
@@ -208,10 +216,12 @@ export function RegisterNativeEngineCubeTexture(): void {
                     },
                     (error) => {
                         if (onError) {
-                            onError(`Failed to load cubemap: ${error?.message}`, error);
+                            onError(`Failed to load cubemap: ${error?.message ?? String(error)}`, error);
                         }
                     }
                 );
+        } else {
+            throw new Error("Cannot load cubemap because 6 files were not defined");
         }
 
         this._internalTexturesCache.push(texture);
