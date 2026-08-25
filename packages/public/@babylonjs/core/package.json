@@ -1,6 +1,6 @@
 {
     "name": "@babylonjs/core",
-    "version": "9.22.1",
+    "version": "9.22.2",
     "main": "index.js",
     "module": "index.js",
     "types": "index.d.ts",
@@ -702,6 +702,7 @@
         "XR/features/WebXRHitTest.js",
         "XR/features/WebXRImageTracking.js",
         "XR/features/WebXRLayers.js",
+        "XR/features/WebXRLayersFallback.js",
         "XR/features/WebXRLightEstimation.js",
         "XR/features/WebXRMeshDetector.js",
         "XR/features/WebXRNearInteraction.js",
