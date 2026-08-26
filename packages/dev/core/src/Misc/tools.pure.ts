@@ -28,6 +28,7 @@ import { type IScreenshotSize } from "./interfaces/screenshotSize";
 import { type Camera } from "../Cameras/camera.pure";
 import { type IColor4Like } from "../Maths/math.like";
 import { IsExponentOfTwo, Mix } from "./tools.functions";
+import { _EvaluateEsModuleAsync } from "./nativeEsModule";
 import { type AbstractEngine } from "../Engines/abstractEngine.pure";
 import { type RenderTargetTexture } from "core/Materials/Textures/renderTargetTexture.pure";
 import { NativeTraceLevel, type INative } from "../Engines/Native/nativeInterfaces";
@@ -600,12 +601,37 @@ export class Tools {
                 // When useModule is set, scriptUrl is not a url at all: it is ES module
                 // source code that the web implementation injects into a
                 // <script type="module"> element (see _LoadScriptWeb). Babylon Native has
-                // no DOM and no ES module loader, so there is nothing to inject it into.
-                // Without this guard the module source was handed to Tools.LoadFile as if
-                // it were a url, producing confusing "Unable to open URL" failures that
-                // quoted the module source back instead of naming a url.
-                const message = "Loading a script as an ES module is not supported in Babylon Native";
-                onError?.(message, new Error(message));
+                // no DOM and no module resolver, so the source is run through the minimal
+                // module evaluator in nativeEsModule.ts instead, which resolves the static
+                // imports over the network and supports top level await.
+                const fetcher = async (moduleUrl: string) =>
+                    await new Promise<string>((resolve, reject) => {
+                        Tools.LoadFile(
+                            moduleUrl,
+                            (data) => {
+                                resolve(data as string);
+                            },
+                            undefined,
+                            undefined,
+                            false,
+                            (_request, exception) => {
+                                // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+                                reject(exception || new Error(`Unable to load module '${moduleUrl}'`));
+                            }
+                        );
+                    });
+
+                // The source is inline, so it has no url of its own; every specifier produced
+                // by _LoadScriptModuleAsync callers is already absolute.
+                // eslint-disable-next-line github/no-then
+                _EvaluateEsModuleAsync(scriptUrl, "", fetcher).then(
+                    () => {
+                        onSuccess?.();
+                    },
+                    (exception) => {
+                        onError?.("LoadScript Error", exception);
+                    }
+                );
                 return;
             }
             Tools.LoadFile(
