@@ -2256,7 +2256,8 @@ export class ThinNativeEngine extends ThinEngine {
                 texture.height,
                 getNativeTextureFormat(format, type),
                 texture.generateMipMaps,
-                texture.invertY
+                texture.invertY,
+                useSRGBBuffer
             );
         }
 
@@ -2472,7 +2473,7 @@ export class ThinNativeEngine extends ThinEngine {
             // statically-bundled IES loader directly instead.
             loaderPromise = Promise.resolve(new _IESTextureLoader());
         } else if (extension.endsWith(".basis") || extension.endsWith(".ktx") || extension.endsWith(".ktx2") || mimeType === "image/ktx" || mimeType === "image/ktx2") {
-            loaderPromise = AbstractEngine.GetCompatibleTextureLoader(extension);
+            loaderPromise = AbstractEngine.GetCompatibleTextureLoader(extension, mimeType);
         }
 
         if (scene) {
@@ -4388,6 +4389,20 @@ export class ThinNativeEngine extends ThinEngine {
     }
 
     /**
+     * @internal
+     */
+    public override _bindTextureDirectly(
+        _target: number,
+        _texture: Nullable<InternalTexture>,
+        _forTextureDataUpdate = false,
+        _force = false
+    ): boolean {
+        // Generic texture loaders use this WebGL-shaped method around direct uploads. Native upload commands
+        // already receive the destination texture explicitly, so there is no bind operation to perform.
+        return false;
+    }
+
+    /**
      * Unbind all textures
      */
     public override unbindAllTextures(): void {
@@ -4830,7 +4845,8 @@ export class ThinNativeEngine extends ThinEngine {
             texture.height,
             getNativeTextureFormat(texture.format, texture.type),
             texture.generateMipMaps,
-            texture.invertY
+            texture.invertY,
+            texture._useSRGBBuffer
         );
 
         texture.isReady = true;
