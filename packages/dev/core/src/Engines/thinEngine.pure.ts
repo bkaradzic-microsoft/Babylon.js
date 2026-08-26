@@ -844,6 +844,7 @@ export class ThinEngine extends AbstractEngine {
             supportRenderPasses: false,
             supportSpriteInstancing: true,
             forceVertexBufferStrideAndOffsetMultiple4Bytes: false,
+            forceSingleSampleFrameGraphTextures: false,
             _checkNonFloatVertexBuffersDontRecreatePipelineContext: false,
         };
     }

@@ -279,8 +279,29 @@ export class FrameGraph implements IDisposable {
                 this._currentProcessedTask = null;
             }
 
-            this.textureManager._allocateTextures(this.optimizeTextureAllocation ? this._tasks : undefined);
+            // Some engines (Babylon Native) cannot resolve a multisampled depth attachment into a shader readable
+            // single-sample depth texture. A task that asks for a resolved MSAA depth means a later task will
+            // sample that depth, so drop MSAA on the render target it belongs to - a framebuffer must have one
+            // sample count across all its attachments, so the color target has to follow the depth.
+            if (this.engine._features.forceSingleSampleFrameGraphTextures) {
+                for (const task of this._tasks) {
+                    const renderer = task as unknown as Partial<FrameGraphObjectRendererTask>;
+                    if (!renderer.resolveMSAADepth) {
+                        continue;
+                    }
+                    this.textureManager._forceSingleSampleTexture(renderer.depthTexture);
+                    const target = renderer.targetTexture;
+                    if (Array.isArray(target)) {
+                        for (const handle of target) {
+                            this.textureManager._forceSingleSampleTexture(handle);
+                        }
+                    } else {
+                        this.textureManager._forceSingleSampleTexture(target);
+                    }
+                }
+            }
 
+            this.textureManager._allocateTextures(this.optimizeTextureAllocation ? this._tasks : undefined);
             for (const task of this._tasks) {
                 task._checkTask();
             }

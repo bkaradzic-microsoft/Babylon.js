@@ -600,6 +600,13 @@ export class ThinNativeEngine extends ThinEngine {
             supportRenderPasses: true,
             supportSpriteInstancing: true,
             forceVertexBufferStrideAndOffsetMultiple4Bytes: true,
+            // bgfx cannot resolve a multisampled depth attachment into a single-sample texture (D3D11's
+            // ResolveSubresource rejects depth formats), so an MSAA depth render target has to be flagged
+            // BGFX_TEXTURE_MSAA_SAMPLE and is exposed to shaders as a Texture2DMS. Babylon's frame graph shaders
+            // declare their depth input as a plain sampler2D, so such a texture reads back as zero everywhere
+            // (e.g. volumetric lighting produced no in-scattering at all). Clamp frame graph render targets to a
+            // single sample so the depth texture stays shader readable.
+            forceSingleSampleFrameGraphTextures: true,
             _checkNonFloatVertexBuffersDontRecreatePipelineContext: false,
         };
 
@@ -3067,6 +3074,19 @@ export class ThinNativeEngine extends ThinEngine {
         }
     }
 
+    // A frame graph depth texture that is only ever paired with a single color target keeps an auto-generated
+    // private depth attachment (see _isFrameGraphDepthShared), which means the InternalTexture the frame graph
+    // handed us is never actually rendered into. That is fine while the depth is only depth-tested against, but
+    // breaks the moment a later pass SAMPLES it (volumetric lighting, SSR, DOF...): the sampler reads an empty
+    // texture. Detect that read and promote the depth to shared, so the framebuffers are rebuilt to render into
+    // the real texture.
+    private _noteFrameGraphDepthSampled(texture: Nullable<InternalTexture>): void {
+        if (!texture || this._frameGraphSharedDepths.has(texture.uniqueId) || !this._frameGraphDepthFirstColor.has(texture.uniqueId)) {
+            return;
+        }
+        this._markFrameGraphDepthShared(texture.uniqueId);
+    }
+
     // Decides whether a frame graph color wrapper should borrow its explicit depth-stencil texture as a shared
     // depth attachment. A depth is shared when it is used by color wrappers that render to DIFFERENT primary
     // color targets (so they cannot be unified through the color-texture framebuffer cache) or when a standalone
@@ -4272,6 +4292,8 @@ export class ThinNativeEngine extends ThinEngine {
             return false;
         }
 
+        this._noteFrameGraphDepthSampled(internalTexture);
+
         this._setTextureWrapMode(
             internalTexture._hardwareTexture.underlyingResource,
             getNativeAddressMode(texture.wrapU),
@@ -4346,6 +4368,7 @@ export class ThinNativeEngine extends ThinEngine {
 
         if (texture && texture._hardwareTexture) {
             const underlyingResource = texture._hardwareTexture.underlyingResource;
+            this._noteFrameGraphDepthSampled(texture);
             this._setNativeTexture(uniform, underlyingResource);
         } else {
             this._unsetNativeTexture(uniform);

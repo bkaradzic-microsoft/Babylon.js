@@ -80,6 +80,15 @@ export interface EngineFeatures {
     /** Indicates that the stride and (byte) offset of a vertex buffer must always be a multiple of 4 bytes */
     forceVertexBufferStrideAndOffsetMultiple4Bytes: boolean;
 
+    /**
+     * Indicates that the engine cannot resolve a multisampled depth attachment into a single-sample, shader
+     * readable depth texture. WebGL does this with a DEPTH_BUFFER_BIT blit and WebGPU with a resolve pass, so a
+     * frame graph depth texture can be MSAA and still be sampled by a later task (volumetric lighting, SSR...).
+     * When this is true the frame graph clamps its render target textures to a single sample, because a
+     * multisampled depth texture would read back as zero in every pass that samples it.
+     */
+    forceSingleSampleFrameGraphTextures: boolean;
+
     /** @internal */
     _checkNonFloatVertexBuffersDontRecreatePipelineContext: boolean;
 }

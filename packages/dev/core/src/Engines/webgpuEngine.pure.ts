@@ -1020,6 +1020,7 @@ export class WebGPUEngine extends ThinWebGPUEngine {
             supportRenderPasses: true,
             supportSpriteInstancing: true,
             forceVertexBufferStrideAndOffsetMultiple4Bytes: true,
+            forceSingleSampleFrameGraphTextures: false,
             _checkNonFloatVertexBuffersDontRecreatePipelineContext: true,
         };
 

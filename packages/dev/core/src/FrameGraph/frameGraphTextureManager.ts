@@ -318,6 +318,29 @@ export class FrameGraphTextureManager {
     }
 
     /**
+     * Forces a not-yet-allocated texture to a single sample.
+     * Used when the engine cannot resolve a multisampled depth attachment into a shader readable depth texture
+     * (see EngineFeatures.forceSingleSampleFrameGraphTextures): the render target that owns such a depth, and the
+     * depth itself, must then be single sampled - a framebuffer requires one sample count across all attachments.
+     * @param handle The handle of the texture to force to a single sample.
+     * @internal
+     */
+    public _forceSingleSampleTexture(handle: FrameGraphTextureHandle | undefined): void {
+        if (handle === undefined) {
+            return;
+        }
+
+        const resolvedHandle = this._textures.get(handle)?.refHandle ?? handle;
+        const entry = this._textures.get(resolvedHandle);
+        if (!entry || !entry.creationOptions || (entry.creationOptions.options.samples ?? 1) <= 1) {
+            return;
+        }
+
+        entry.creationOptions.options.samples = 1;
+        entry.textureDescriptionHash = this._createTextureDescriptionHash(entry.creationOptions);
+    }
+
+    /**
      * Creates a (frame graph) render target wrapper
      * Note that renderTargets or renderTargetDepth can be undefined, but not both at the same time!
      * @param name Name of the render target wrapper
