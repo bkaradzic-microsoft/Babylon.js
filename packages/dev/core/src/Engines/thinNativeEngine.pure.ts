@@ -2898,6 +2898,18 @@ export class ThinNativeEngine extends ThinEngine {
     }
 
     /**
+     * Generates mipmaps for the given texture.
+     * @param _texture The texture to generate the mipmaps for.
+     */
+    public override generateMipmaps(_texture: InternalTexture): void {
+        // The WebGL implementation binds the texture and calls gl.generateMipmap; there is no equivalent
+        // standalone command on Babylon Native, and none is needed: a render target whose mip chain must be
+        // rebuilt is attached to its framebuffer with BGFX_RESOLVE_AUTO_GEN_MIPS (see CreateFrameBufferImpl),
+        // so bgfx regenerates the chain when the view resolves. Without this override the inherited WebGL path
+        // dereferenced a non-existent GL context (frame graph tasks call generateMipMaps explicitly).
+    }
+
+    /**
      * @internal
      */
     public _releaseFramebufferObjects(framebuffer: Nullable<NativeFramebuffer>): void {
