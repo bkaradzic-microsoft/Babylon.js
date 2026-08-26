@@ -557,7 +557,11 @@ export class ThinNativeEngine extends ThinEngine {
         this._features = {
             forceBitmapOverHTMLImageElement: true,
             supportRenderAndCopyToLodForFloatTextures: false,
-            supportDepthStencilTexture: false,
+            // Native can attach an explicit depth/stencil texture to a render target (see
+            // _createDepthStencilTexture) and sample it afterwards, so consumers such as ShadowGenerator
+            // may allocate a readable depth attachment for the shadow map. Hardware comparison samplers
+            // are still unavailable (supportShadowSamplers stays false); the depth is sampled as data.
+            supportDepthStencilTexture: true,
             supportShadowSamplers: false,
             uniformBufferHardCheckMatrix: false,
             // Native supports GPU cube prefiltering (HDRFiltering / HDRIrradianceFiltering): the render path
@@ -2769,6 +2773,21 @@ export class ThinNativeEngine extends ThinEngine {
         }
     }
 
+    /**
+     * Creates a depth/stencil texture for a render target wrapper.
+     * @param size The size of the depth texture
+     * @param options The options defining the depth texture
+     * @param rtWrapper The render target wrapper the depth texture belongs to
+     * @returns The depth/stencil texture
+     */
+    public override createDepthStencilTexture(size: TextureSize, options: DepthTextureCreationOptions, rtWrapper: RenderTargetWrapper): InternalTexture {
+        // AbstractEngine routes cube render targets (point-light shadow maps) to _createDepthStencilCubeTexture,
+        // which only exists on the WebGL engine and drives gl.TEXTURE_CUBE_MAP directly. Native already handles
+        // cube and 2D-array targets in _createDepthStencilTexture through the wrapper's per-face framebuffers,
+        // so route every request there instead of throwing on an undefined GL context.
+        return this._createDepthStencilTexture(size, options, rtWrapper);
+    }
+
     public override _createDepthStencilTexture(size: TextureSize, options: DepthTextureCreationOptions, rtWrapper: RenderTargetWrapper): InternalTexture {
         // TODO: handle other options?
         const generateStencil = options.generateStencil || false;
@@ -2792,6 +2811,7 @@ export class ThinNativeEngine extends ThinEngine {
         texture.width = width;
         texture.height = height;
         texture.is2DArray = layers > 0;
+        texture.isCube = !!options.isCube;
         texture.depth = layers || depth;
         texture.isReady = true;
         texture.samples = samples;
@@ -2836,9 +2856,38 @@ export class ThinNativeEngine extends ThinEngine {
             return texture;
         }
 
-        const framebuffer = this._engine.createFrameBuffer(texture._hardwareTexture!.underlyingResource, width, height, generateStencil, true, samples);
+        // Plain 2D render target: build a framebuffer that carries BOTH the render target's color attachment
+        // and the standalone depth/stencil texture. bindFramebuffer prefers _framebufferDepthStencil over
+        // _framebuffer, so attaching depth alone would silently drop the color target -- shadow maps would
+        // render their packed depth into nothing. The depth texture's bgfx handle is still invalid at this
+        // point, which is how CreateFrameBufferImpl recognizes a request for a readable depth attachment that
+        // it aliases back into the supplied texture so it can be sampled afterwards.
+        const colorResource = rtWrapper.texture?._hardwareTexture?.underlyingResource;
+        const framebuffer = this._engine.createMultiFrameBuffer(
+            colorResource ? [colorResource] : [],
+            width,
+            height,
+            generateStencil,
+            true,
+            samples,
+            undefined,
+            texture._hardwareTexture!.underlyingResource
+        );
         nativeRTWrapper._framebufferDepthStencil = framebuffer;
         return texture;
+    }
+
+    /**
+     * Updates a depth texture Comparison Mode and Function.
+     * @param texture The texture to set the comparison function for
+     * @param comparisonFunction The comparison function to set, 0 if no comparison required
+     */
+    public updateTextureComparisonFunction(texture: InternalTexture, comparisonFunction: number): void {
+        // Babylon Native has no hardware comparison samplers (see _features.supportShadowSamplers): shadow
+        // maps are sampled as plain data textures and the comparison is performed in the shader. There is no
+        // sampler state to update, but engine-agnostic code (LightingVolume, for instance) toggles the
+        // comparison function around a copy and expects the value to be recorded, so keep it in sync.
+        texture._comparisonFunction = comparisonFunction;
     }
 
     /**
@@ -4833,7 +4882,10 @@ export class ThinNativeEngine extends ThinEngine {
                 // eslint-disable-next-line github/no-then
                 .then((rawBuffer) => {
                     if (!buffer) {
-                        buffer = new Uint8Array(rawBuffer);
+                        // readTexture normalizes the result to four channels, matching gl.readPixels(..., gl.RGBA, ...):
+                        // RGBA8 for integer source formats and RGBA32F for float ones. Pick the matching view so that
+                        // float render targets are handed back as a Float32Array exactly like on WebGL.
+                        buffer = rawBuffer.byteLength === 16 * width * height ? new Float32Array(rawBuffer) : new Uint8Array(rawBuffer);
                     }
 
                     return buffer;
