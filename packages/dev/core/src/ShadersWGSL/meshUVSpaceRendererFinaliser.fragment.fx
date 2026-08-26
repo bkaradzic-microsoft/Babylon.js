@@ -8,7 +8,7 @@ var textureSamplerSampler: sampler;
 var textureSampler: texture_2d<f32>;
 var maskTextureSamplerSampler: sampler;
 var maskTextureSampler: texture_2d<f32>;
-uniform textureSize: vec2f;
+uniform renderTextureSize: vec2f;
 
 @fragment
 fn main(input: FragmentInputs) -> FragmentOutputs {
@@ -17,7 +17,7 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
     if (mask.r > 0.5) {
         fragmentOutputs.color = textureSample(textureSampler, textureSamplerSampler, input.vUV);
     } else {
-        var texelSize: vec2f = 4.0 / uniforms.textureSize;
+        var texelSize: vec2f = 4.0 / uniforms.renderTextureSize;
 
         var uv_p01: vec2f = input.vUV +  vec2f(-1.0, 0.0) * texelSize;
         var uv_p21: vec2f = input.vUV +  vec2f(1.0, 0.0) * texelSize;

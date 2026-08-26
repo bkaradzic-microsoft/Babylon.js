@@ -368,7 +368,7 @@ export class MeshUVSpaceRenderer {
         this._finalPostProcess = new PostProcess(
             this._mesh.name + "_fixSeamsPostProcess",
             "meshUVSpaceRendererFinaliser",
-            ["textureSize"],
+            ["renderTextureSize"],
             ["textureSampler", "maskTextureSampler"],
             1.0,
             null,
@@ -386,7 +386,7 @@ export class MeshUVSpaceRenderer {
 
         this._finalPostProcess.onApplyObservable.add((effect) => {
             effect.setTexture("maskTextureSampler", this._maskTexture);
-            effect.setFloat2("textureSize", this._options.width, this._options.height);
+            effect.setFloat2("renderTextureSize", this._options.width, this._options.height);
         });
     }
 
