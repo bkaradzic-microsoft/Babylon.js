@@ -26,12 +26,16 @@ export class BoundingInfoHelper {
 
     private async _initializePlatformAsync() {
         if (!this._platform) {
-            if (this._engine.getCaps().supportComputeShaders) {
+            const supportsComputeShaders = this._engine.getCaps().supportComputeShaders;
+            if (supportsComputeShaders && "readFromMultipleStorageBuffers" in this._engine) {
                 const module = await import("./computeShaderBoundingHelper");
                 this._platform = new module.ComputeShaderBoundingHelper(this._engine);
             } else if (this._engine.getCaps().supportTransformFeedbacks) {
                 const module = await import("./transformFeedbackBoundingHelper");
                 this._platform = new module.TransformFeedbackBoundingHelper(this._engine as ThinEngine);
+            } else if (supportsComputeShaders) {
+                const module = await import("./cpuBoundingInfoHelper");
+                this._platform = new module.CpuBoundingInfoHelper();
             } else {
                 throw new Error("Your engine does not support Compute Shaders or Transform Feedbacks");
             }

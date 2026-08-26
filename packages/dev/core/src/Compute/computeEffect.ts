@@ -203,7 +203,8 @@ export class ComputeEffect {
                         const key = split[0];
                         const value = split[1];
                         if (!isNaN(parseInt(value)) || !isNaN(parseFloat(value))) {
-                            code = `const ${key} = ${value};\n` + code;
+                            const declaration = this._shaderLanguage === ShaderLanguage.GLSL ? `#define ${key} ${value}\n` : `const ${key} = ${value};\n`;
+                            code = declaration + code;
                         }
                     }
                 }
