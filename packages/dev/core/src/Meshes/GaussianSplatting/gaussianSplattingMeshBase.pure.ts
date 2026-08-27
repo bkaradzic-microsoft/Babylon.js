@@ -1535,6 +1535,7 @@ export class GaussianSplattingMeshBase extends Mesh {
                         cameraViewInfos.sortAppliedId = cameraViewInfos.sortRequestId;
                         this._canPostToWorker = true;
                         this._readyToDisplay = true;
+                        this._sortIsDirty = false;
                     }
                 }
             });
