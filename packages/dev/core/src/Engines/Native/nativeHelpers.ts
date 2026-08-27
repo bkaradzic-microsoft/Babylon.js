@@ -19,13 +19,19 @@ export function getTextureFormatComponentCount(format: number): number {
         case Constants.TEXTUREFORMAT_LUMINANCE:
         case Constants.TEXTUREFORMAT_R:
         case Constants.TEXTUREFORMAT_R_INTEGER:
+        case Constants.TEXTUREFORMAT_R16_UNORM:
+        case Constants.TEXTUREFORMAT_R16_SNORM:
             return 1;
         case Constants.TEXTUREFORMAT_LUMINANCE_ALPHA:
         case Constants.TEXTUREFORMAT_RG:
         case Constants.TEXTUREFORMAT_RG_INTEGER:
+        case Constants.TEXTUREFORMAT_RG16_UNORM:
+        case Constants.TEXTUREFORMAT_RG16_SNORM:
             return 2;
         case Constants.TEXTUREFORMAT_RGB:
         case Constants.TEXTUREFORMAT_RGB_INTEGER:
+        case Constants.TEXTUREFORMAT_RGB16_UNORM:
+        case Constants.TEXTUREFORMAT_RGB16_SNORM:
             return 3;
         default:
             // RGBA and everything else (safe upper bound for sizing)
@@ -92,6 +98,47 @@ export function getNativeTextureFormat(format: number, type: number): number {
             return _native.Engine.TEXTURE_FORMAT_ETC2;
         case Constants.TEXTUREFORMAT_COMPRESSED_RGBA8_ETC2_EAC:
             return _native.Engine.TEXTURE_FORMAT_ETC2A;
+
+        case Constants.TEXTUREFORMAT_R16_UNORM:
+            if (type === Constants.TEXTURETYPE_UNSIGNED_SHORT) {
+                return _native.Engine.TEXTURE_FORMAT_R16;
+            }
+            break;
+        case Constants.TEXTUREFORMAT_RG16_UNORM:
+            if (type === Constants.TEXTURETYPE_UNSIGNED_SHORT) {
+                return _native.Engine.TEXTURE_FORMAT_RG16;
+            }
+            break;
+        case Constants.TEXTUREFORMAT_RGB16_UNORM:
+            if (type === Constants.TEXTURETYPE_UNSIGNED_SHORT) {
+                return _native.Engine.TEXTURE_FORMAT_RGBA16;
+            }
+            break;
+        case Constants.TEXTUREFORMAT_RGBA16_UNORM:
+            if (type === Constants.TEXTURETYPE_UNSIGNED_SHORT) {
+                return _native.Engine.TEXTURE_FORMAT_RGBA16;
+            }
+            break;
+        case Constants.TEXTUREFORMAT_R16_SNORM:
+            if (type === Constants.TEXTURETYPE_SHORT) {
+                return _native.Engine.TEXTURE_FORMAT_R16S;
+            }
+            break;
+        case Constants.TEXTUREFORMAT_RG16_SNORM:
+            if (type === Constants.TEXTURETYPE_SHORT) {
+                return _native.Engine.TEXTURE_FORMAT_RG16S;
+            }
+            break;
+        case Constants.TEXTUREFORMAT_RGB16_SNORM:
+            if (type === Constants.TEXTURETYPE_SHORT) {
+                return _native.Engine.TEXTURE_FORMAT_RGBA16S;
+            }
+            break;
+        case Constants.TEXTUREFORMAT_RGBA16_SNORM:
+            if (type === Constants.TEXTURETYPE_SHORT) {
+                return _native.Engine.TEXTURE_FORMAT_RGBA16S;
+            }
+            break;
 
         case Constants.TEXTUREFORMAT_RGB: {
             switch (type) {

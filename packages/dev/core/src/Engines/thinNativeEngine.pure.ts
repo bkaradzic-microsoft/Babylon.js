@@ -253,13 +253,11 @@ const remappedAttributesNames: string[] = [];
 const _AllAttachmentsMask = 0xff;
 
 /**
- * Expands a single cube face of 3-component (RGB) pixel data into 4-component (RGBA) data, mirroring the
- * WebGL raw-cube upload. Native has no 3-component float texture format, so HDR/`.env` RGB float faces must
- * be widened to RGBA before being uploaded through updateTextureData.
+ * Expands 3-component (RGB) pixel data into 4-component (RGBA) data. Native has no 3-component float or
+ * normalized 16-bit texture formats, so these sources must be widened before upload.
  * @internal
  */
-function _ConvertRgbToRgbaCubeFace(rgbData: ArrayBufferView, width: number, height: number, type: number): ArrayBufferView {
-    const count = width * height;
+function _ConvertRgbToRgbaTextureData(rgbData: ArrayBufferView, count: number, type: number, normalized = false): ArrayBufferView {
     const src = rgbData as unknown as { [index: number]: number };
     let dst: { [index: number]: number };
     let alpha = 1;
@@ -268,6 +266,14 @@ function _ConvertRgbToRgbaCubeFace(rgbData: ArrayBufferView, width: number, heig
     } else if (type === Constants.TEXTURETYPE_HALF_FLOAT) {
         dst = new Uint16Array(count * 4);
         alpha = 15360; // encoding of 1.0 in half float
+    } else if (type === Constants.TEXTURETYPE_SHORT) {
+        dst = new Int16Array(count * 4);
+        alpha = normalized ? 32767 : 1;
+    } else if (type === Constants.TEXTURETYPE_UNSIGNED_SHORT) {
+        dst = new Uint16Array(count * 4);
+        alpha = normalized ? 65535 : 1;
+    } else if (type === Constants.TEXTURETYPE_INT) {
+        dst = new Int32Array(count * 4);
     } else if (type === Constants.TEXTURETYPE_UNSIGNED_INTEGER) {
         dst = new Uint32Array(count * 4);
     } else {
@@ -286,6 +292,12 @@ function _ConvertRgbToRgbaCubeFace(rgbData: ArrayBufferView, width: number, heig
     return dst as unknown as ArrayBufferView;
 }
 
+function _ConvertNormalizedRgb16TextureData(data: ArrayBufferView, count: number, format: number, type: number): ArrayBufferView {
+    return (format === Constants.TEXTUREFORMAT_RGB16_UNORM || format === Constants.TEXTUREFORMAT_RGB16_SNORM) && data.byteLength === count * 3 * 2
+        ? _ConvertRgbToRgbaTextureData(data, count, type, true)
+        : data;
+}
+
 /**
  * Box-downsamples a single 4-component (RGBA) mip level to the next (half-size) level, mirroring the result of
  * gl.generateMipmap for the raw-cube path. Handles the float / half-float / integer / byte element types the
@@ -301,6 +313,10 @@ function _DownsampleRgbaTextureData(data: ArrayBufferView, width: number, height
     if (type === Constants.TEXTURETYPE_FLOAT) {
         dst = new Float32Array(dstWidth * dstHeight * 4);
     } else if (isHalf) {
+        dst = new Uint16Array(dstWidth * dstHeight * 4);
+    } else if (type === Constants.TEXTURETYPE_SHORT) {
+        dst = new Int16Array(dstWidth * dstHeight * 4);
+    } else if (type === Constants.TEXTURETYPE_UNSIGNED_SHORT) {
         dst = new Uint16Array(dstWidth * dstHeight * 4);
     } else if (type === Constants.TEXTURETYPE_UNSIGNED_INTEGER) {
         dst = new Uint32Array(dstWidth * dstHeight * 4);
@@ -548,7 +564,7 @@ export class ThinNativeEngine extends ThinEngine {
             texture2DArrayMaxLayerCount: _native.Engine.CAPS_LIMITS_MAX_TEXTURE_LAYERS,
             disableMorphTargetTexture: false,
             parallelShaderCompile: { COMPLETION_STATUS_KHR: 0 },
-            textureNorm16: false,
+            textureNorm16: true,
             blendParametersPerTarget: false,
             dualSourceBlending: false,
             supportReadWriteStorageTextures: false,
@@ -2153,7 +2169,8 @@ export class ThinNativeEngine extends ThinEngine {
 
         if (texture._hardwareTexture) {
             const nativeTexture = texture._hardwareTexture.underlyingResource;
-            this._engine.loadRawTexture2DArray(nativeTexture, data, width, height, depth, getNativeTextureFormat(format, textureType), generateMipMaps, invertY);
+            const uploadData = data ? _ConvertNormalizedRgb16TextureData(data, width * height * depth, format, textureType) : data;
+            this._engine.loadRawTexture2DArray(nativeTexture, uploadData, width, height, depth, getNativeTextureFormat(format, textureType), generateMipMaps, invertY);
 
             const filter = getNativeSamplingMode(samplingMode);
             this._setTextureSampling(nativeTexture, filter);
@@ -2193,7 +2210,8 @@ export class ThinNativeEngine extends ThinEngine {
 
         if (texture._hardwareTexture) {
             const nativeTexture = texture._hardwareTexture.underlyingResource;
-            this._engine.loadRawTexture3D(nativeTexture, data, width, height, depth, getNativeTextureFormat(format, textureType), generateMipMaps, invertY);
+            const uploadData = data ? _ConvertNormalizedRgb16TextureData(data, width * height * depth, format, textureType) : data;
+            this._engine.loadRawTexture3D(nativeTexture, uploadData, width, height, depth, getNativeTextureFormat(format, textureType), generateMipMaps, invertY);
 
             const filter = getNativeSamplingMode(samplingMode);
             this._setTextureSampling(nativeTexture, filter);
@@ -2219,9 +2237,10 @@ export class ThinNativeEngine extends ThinEngine {
 
         if (bufferView && texture._hardwareTexture) {
             const nativeTexture = texture._hardwareTexture.underlyingResource;
+            const uploadData = _ConvertNormalizedRgb16TextureData(bufferView, texture.width * texture.height * texture.depth, format, textureType);
             this._engine.loadRawTexture3D(
                 nativeTexture,
-                bufferView,
+                uploadData,
                 texture.width,
                 texture.height,
                 texture.depth,
@@ -2249,9 +2268,10 @@ export class ThinNativeEngine extends ThinEngine {
 
         if (bufferView && texture._hardwareTexture) {
             const underlyingResource = texture._hardwareTexture.underlyingResource;
+            const uploadData = _ConvertNormalizedRgb16TextureData(bufferView, texture.width * texture.height, format, type);
             this._engine.loadRawTexture(
                 underlyingResource,
-                bufferView,
+                uploadData,
                 texture.width,
                 texture.height,
                 getNativeTextureFormat(format, type),
@@ -2370,7 +2390,8 @@ export class ThinNativeEngine extends ThinEngine {
         texture.invertY = invertY;
         texture._compression = compression;
 
-        const needConversion = format === Constants.TEXTUREFORMAT_RGB;
+        const normalizedRgb16 = format === Constants.TEXTUREFORMAT_RGB16_UNORM || format === Constants.TEXTUREFORMAT_RGB16_SNORM;
+        const needConversion = format === Constants.TEXTUREFORMAT_RGB || normalizedRgb16;
         let width = Math.max(1, texture.width >> level);
         let height = Math.max(1, texture.height >> level);
 
@@ -2380,7 +2401,10 @@ export class ThinNativeEngine extends ThinEngine {
         // this, which does not exist on Native).
         let faces: ArrayBufferView[] = [];
         for (let faceIndex = 0; faceIndex < 6; faceIndex++) {
-            const faceData = needConversion ? _ConvertRgbToRgbaCubeFace(data[faceIndex], width, height, type) : data[faceIndex];
+            const faceData =
+                format === Constants.TEXTUREFORMAT_RGB
+                    ? _ConvertRgbToRgbaTextureData(data[faceIndex], width * height, type)
+                    : _ConvertNormalizedRgb16TextureData(data[faceIndex], width * height, format, type);
             faces.push(faceData);
             this.updateTextureData(texture, faceData, 0, 0, width, height, faceIndex, level);
         }
@@ -4795,7 +4819,8 @@ export class ThinNativeEngine extends ThinEngine {
         // face / array layer, lod selects the mip level). invertY is forwarded so the native side can match
         // the vertical orientation the base texture upload uses. Mip regeneration after a partial update is
         // not supported on Native, so generateMipMaps is ignored (consistent with the other raw-texture paths).
-        this._engine.updateTextureData(texture._hardwareTexture.underlyingResource, imageData, xOffset, yOffset, width, height, faceIndex, lod, texture.invertY);
+        const uploadData = _ConvertNormalizedRgb16TextureData(imageData, width * height, texture.format, texture.type);
+        this._engine.updateTextureData(texture._hardwareTexture.underlyingResource, uploadData, xOffset, yOffset, width, height, faceIndex, lod, texture.invertY);
     }
 
     /**
@@ -4836,6 +4861,7 @@ export class ThinNativeEngine extends ThinEngine {
         if (typeof view.subarray === "function" && view.length > requiredElements) {
             data = view.subarray(0, requiredElements);
         }
+        data = _ConvertNormalizedRgb16TextureData(data, texture.width * texture.height, texture.format, texture.type);
 
         const underlyingResource = texture._hardwareTexture.underlyingResource;
         this._engine.loadRawTexture(
