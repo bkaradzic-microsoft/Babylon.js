@@ -150,6 +150,11 @@ export function getNativeTextureFormat(format: number, type: number): number {
                     return _native.Engine.TEXTURE_FORMAT_RGB8I;
                 case Constants.TEXTURETYPE_UNSIGNED_INTEGER:
                     return _native.Engine.TEXTURE_FORMAT_RGB8U;
+                // Basis fallback path (LoadTextureFromTranscodeResult) uploads RGB565.
+                // WebGL RGB565 packs R in the high bits; on D3D/bgfx that layout
+                // matches B5G6R5 (R5G6B5 swaps R/B → yellow becomes cyan).
+                case Constants.TEXTURETYPE_UNSIGNED_SHORT_5_6_5:
+                    return _native.Engine.TEXTURE_FORMAT_B5G6R5;
             }
             break;
         }
