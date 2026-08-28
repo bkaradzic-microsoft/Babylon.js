@@ -3131,6 +3131,22 @@ export class ThinNativeEngine extends ThinEngine {
         this._markFrameGraphDepthShared(texture.uniqueId);
     }
 
+        /**
+             * Promote a frame-graph depth texture to shared before a clear writes into it.
+             * Without this, a Clear(color+depth) can bind an auto-generated private depth (the
+             * "single color target" optimization) while a later Geometry/ObjectRenderer MRT pass
+             * promotes the same handle to shared and depth-tests against the never-cleared real
+             * texture — which is exactly the multi-RTT MSAA depth-ordering failure (table
+             * occludes nearer sphere). Mirrors the depth-only clear path that already marks shared.
+             * @internal
+             */
+            public _noteFrameGraphDepthCleared(texture: Nullable<InternalTexture>): void {
+                if (!texture) {
+                    return;
+                }
+                this._markFrameGraphDepthShared(texture.uniqueId);
+            }
+
     // Decides whether a frame graph color wrapper should borrow its explicit depth-stencil texture as a shared
     // depth attachment. A depth is shared when it is used by color wrappers that render to DIFFERENT primary
     // color targets (so they cannot be unified through the color-texture framebuffer cache) or when a standalone
@@ -3877,12 +3893,15 @@ export class ThinNativeEngine extends ThinEngine {
     }
 
     public override unBindMultiColorAttachmentFramebuffer(_rtWrapper: RenderTargetWrapper, _disableGenerateMipMaps = false, onBeforeUnbind?: () => void): void {
-        this._currentRenderTarget = null;
-        if (onBeforeUnbind) {
-            onBeforeUnbind();
+            // Full-frame viewport before unbind so bgfx MSAA resolve is not clipped to a
+            // prior sub-rect (e.g. FG CopyTexture viewport) — see _resetViewportForResolve.
+            this._resetViewportForResolve();
+            this._currentRenderTarget = null;
+            if (onBeforeUnbind) {
+                onBeforeUnbind();
+            }
+            this._bindUnboundFramebuffer(null);
         }
-        this._bindUnboundFramebuffer(null);
-    }
 
     public override updateMultipleRenderTargetTextureSampleCount(rtWrapper: Nullable<RenderTargetWrapper>, samples: number, _initializeBuffers = true): number {
         if (!rtWrapper || rtWrapper.samples === samples) {
@@ -4072,56 +4091,79 @@ export class ThinNativeEngine extends ThinEngine {
         // framebuffer here from the current textures + their per-attachment layer/face indices.
         if (nativeRTWrapper.isMulti && (nativeRTWrapper.is3D || nativeRTWrapper._isMixedTypeMRT || this._isLayeredFrameGraphMRT(nativeRTWrapper))) {
             this._bindLayeredMultiFramebuffer(nativeRTWrapper);
-            return;
-        }
-
-        // Single 3D render target (IBL voxel grid + its procedural mip chain): render to the requested
-        // (mip, layer) through a lazily-built, cached per-slice framebuffer. requiredWidth/Height carry the
-        // mip dimensions for the voxel mip-copy pass (forceFullscreenViewport is always set by that caller).
-        if (nativeRTWrapper.is3D) {
-            this._bindUnboundFramebuffer(this._get3DLayerFramebuffer(nativeRTWrapper, lodLevel ?? 0, layer ?? 0, requiredWidth, requiredHeight));
-            return;
-        }
-
-        if (requiredWidth || requiredHeight) {
-            throw new Error("Required width/height for frame buffers not yet supported in NativeEngine.");
-        }
-
-        // Frame graph render targets are created via createMultipleRenderTarget({ dontCreateTextures: true }),
-        // so no bgfx framebuffer is built up-front; the externally-allocated color/depth textures are attached
-        // afterwards via setTexture/setDepthStencilTexture. Lazily build a framebuffer from those textures the
-        // first time the wrapper is bound. Several wrappers can reference the same underlying texture(s), so the
-        // framebuffer is cached on (and shared through) the first color texture's hardware wrapper to avoid each
-        // fresh framebuffer/view clearing the texture and clobbering earlier passes.
-        if (!nativeRTWrapper._framebuffers && !nativeRTWrapper._framebufferDepthStencil && !nativeRTWrapper._framebuffer) {
-            this._buildFrameGraphFramebuffer(nativeRTWrapper);
-        }
-
-        if (nativeRTWrapper._framebuffers) {
-            // _framebuffers is indexed by cube face for cube render targets, but by array layer for 2D-array
-            // render targets (cascaded shadow maps, the atmosphere aerial-perspective LUT). Callers pass the
-            // face in `faceIndex` and the array slice in `layer`, so pick whichever applies to this wrapper;
-            // indexing a layered target by `faceIndex` bound slice 0 for every layer and left slices 1..N-1
-            // unwritten.
-            const isCubeTarget = nativeRTWrapper.isCube;
-            const framebufferIndex = isCubeTarget ? faceIndex ?? 0 : layer || faceIndex || 0;
-
-            // Cube render target: bind the framebuffer for the requested face. HDR prefiltering renders each
-            // roughness level into its own mip, so for lodLevel > 0 lazily build/cache a per-(face, mip)
-            // framebuffer; the pre-built _framebuffers array only targets mip 0.
-            if (lodLevel && isCubeTarget) {
-                this._bindUnboundFramebuffer(this._getCubeFaceMipFramebuffer(nativeRTWrapper, faceIndex ?? 0, lodLevel));
-            } else {
-                this._bindUnboundFramebuffer(nativeRTWrapper._framebuffers[Math.min(framebufferIndex, nativeRTWrapper._framebuffers.length - 1)]);
+                this._applyBoundViewport(forceFullscreenViewport);
+                return;
             }
-        } else if (faceIndex) {
-            throw new Error("Cuboid frame buffers are not yet supported in NativeEngine.");
-        } else if (nativeRTWrapper._framebufferDepthStencil) {
-            this._bindUnboundFramebuffer(nativeRTWrapper._framebufferDepthStencil);
-        } else {
-            this._bindUnboundFramebuffer(nativeRTWrapper._framebuffer);
+
+            // Single 3D render target (IBL voxel grid + its procedural mip chain): render to the requested
+            // (mip, layer) through a lazily-built, cached per-slice framebuffer. requiredWidth/Height carry the
+            // mip dimensions for the voxel mip-copy pass (forceFullscreenViewport is always set by that caller).
+            if (nativeRTWrapper.is3D) {
+                this._bindUnboundFramebuffer(this._get3DLayerFramebuffer(nativeRTWrapper, lodLevel ?? 0, layer ?? 0, requiredWidth, requiredHeight));
+                this._applyBoundViewport(forceFullscreenViewport);
+                return;
+            }
+
+            if (requiredWidth || requiredHeight) {
+                throw new Error("Required width/height for frame buffers not yet supported in NativeEngine.");
+            }
+
+            // Frame graph render targets are created via createMultipleRenderTarget({ dontCreateTextures: true }),
+            // so no bgfx framebuffer is built up-front; the externally-allocated color/depth textures are attached
+            // afterwards via setTexture/setDepthStencilTexture. Lazily build a framebuffer from those textures the
+            // first time the wrapper is bound. Several wrappers can reference the same underlying texture(s), so the
+            // framebuffer is cached on (and shared through) the first color texture's hardware wrapper to avoid each
+            // fresh framebuffer/view clearing the texture and clobbering earlier passes.
+            if (!nativeRTWrapper._framebuffers && !nativeRTWrapper._framebufferDepthStencil && !nativeRTWrapper._framebuffer) {
+                this._buildFrameGraphFramebuffer(nativeRTWrapper);
+            }
+
+            if (nativeRTWrapper._framebuffers) {
+                // _framebuffers is indexed by cube face for cube render targets, but by array layer for 2D-array
+                // render targets (cascaded shadow maps, the atmosphere aerial-perspective LUT). Callers pass the
+                // face in `faceIndex` and the array slice in `layer`, so pick whichever applies to this wrapper;
+                // indexing a layered target by `faceIndex` bound slice 0 for every layer and left slices 1..N-1
+                // unwritten.
+                const isCubeTarget = nativeRTWrapper.isCube;
+                const framebufferIndex = isCubeTarget ? faceIndex ?? 0 : layer || faceIndex || 0;
+
+                // Cube render target: bind the framebuffer for the requested face. HDR prefiltering renders each
+                // roughness level into its own mip, so for lodLevel > 0 lazily build/cache a per-(face, mip)
+                // framebuffer; the pre-built _framebuffers array only targets mip 0.
+                if (lodLevel && isCubeTarget) {
+                    this._bindUnboundFramebuffer(this._getCubeFaceMipFramebuffer(nativeRTWrapper, faceIndex ?? 0, lodLevel));
+                } else {
+                    this._bindUnboundFramebuffer(nativeRTWrapper._framebuffers[Math.min(framebufferIndex, nativeRTWrapper._framebuffers.length - 1)]);
+                }
+            } else if (faceIndex) {
+                throw new Error("Cuboid frame buffers are not yet supported in NativeEngine.");
+            } else if (nativeRTWrapper._framebufferDepthStencil) {
+                this._bindUnboundFramebuffer(nativeRTWrapper._framebufferDepthStencil);
+            } else {
+                this._bindUnboundFramebuffer(nativeRTWrapper._framebuffer);
+            }
+
+            // Match ThinEngine/WebGPU: viewport is engine-global and must be reapplied after a framebuffer
+            // bind. Native stores viewport per FrameBuffer, so without this a prior setViewport (e.g. FG
+            // CopyTexture with a sub-rect) is lost when _applyRenderTarget binds the destination RT and
+            // the copy draws full-screen instead.
+            this._applyBoundViewport(forceFullscreenViewport);
         }
-    }
+
+        // Re-apply the engine's cached viewport onto the newly bound framebuffer (WebGL/WebGPU behaviour).
+        // forceFullscreenViewport paints 0..1 without clobbering _cachedViewport, matching ThinEngine's
+        // use of _viewport() for the fullscreen path.
+        private _applyBoundViewport(forceFullscreenViewport?: boolean): void {
+            if (this._cachedViewport && !forceFullscreenViewport) {
+                this.setViewport(this._cachedViewport);
+                return;
+            }
+            if (forceFullscreenViewport) {
+                const cached = this._cachedViewport;
+                this.setViewport({ x: 0, y: 0, width: 1, height: 1 });
+                this._cachedViewport = cached;
+            }
+        }
 
     // Returns (building + caching on first use) the bgfx framebuffer that targets a single (mip, layer)
     // slice of a 3D render-target texture. Used by the IBL voxel grid + procedural mip chain, whose
@@ -4258,14 +4300,27 @@ export class ThinNativeEngine extends ThinEngine {
     public override unBindFramebuffer(texture: RenderTargetWrapper, disableGenerateMipMaps = false, onBeforeUnbind?: () => void): void {
         // NOTE: Disabling mipmap generation is not yet supported in NativeEngine.
 
-        this._currentRenderTarget = null;
+            // Full-frame viewport before unbind so bgfx MSAA resolve is not clipped to a
+            // prior sub-rect (e.g. FG CopyTexture viewport) — see _resetViewportForResolve.
+            this._resetViewportForResolve();
+            this._currentRenderTarget = null;
 
-        if (onBeforeUnbind) {
-            onBeforeUnbind();
+            if (onBeforeUnbind) {
+                onBeforeUnbind();
+            }
+
+            this._bindUnboundFramebuffer(null);
         }
 
-        this._bindUnboundFramebuffer(null);
-    }
+        // bgfx may honour the active view rect when resolving an MSAA render target on unbind.
+        // WebGL's blitFramebuffer always resolves the full texture size; match that by forcing a
+        // 0..1 viewport for the resolve without permanently clobbering _cachedViewport (callers
+        // such as restoreDefaultFramebuffer re-apply the cache afterwards).
+        private _resetViewportForResolve(): void {
+            const cached = this._cachedViewport;
+            this.setViewport({ x: 0, y: 0, width: 1, height: 1 });
+            this._cachedViewport = cached;
+        }
 
     public override createDynamicVertexBuffer(data: DataArray): DataBuffer {
         return this.createVertexBuffer(data, true);

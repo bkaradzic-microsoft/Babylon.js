@@ -340,6 +340,23 @@ export class FrameGraphTextureManager {
         entry.textureDescriptionHash = this._createTextureDescriptionHash(entry.creationOptions);
     }
 
+        /**
+         * Forces every not-yet-allocated frame-graph texture down to a single sample.
+         * Used by engines that cannot support MSAA depth in the FrameGraph (see
+         * EngineFeatures.forceSingleSampleFrameGraphTextures).
+         * @internal
+         */
+        public _forceAllTexturesSingleSample(): void {
+            this._textures.forEach((entry, handle) => {
+                if (entry.refHandle !== undefined) {
+                    // Dangling / alias handles share creation options with their target; force the target.
+                    this._forceSingleSampleTexture(entry.refHandle);
+                    return;
+                }
+                this._forceSingleSampleTexture(handle);
+            });
+        }
+
     /**
      * Creates a (frame graph) render target wrapper
      * Note that renderTargets or renderTargetDepth can be undefined, but not both at the same time!
