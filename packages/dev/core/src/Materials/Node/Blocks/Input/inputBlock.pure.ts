@@ -529,7 +529,18 @@ export class InputBlock extends NodeMaterialBlock {
         // Uniforms
         if (this.isUniform) {
             if (!this._associatedVariableName) {
-                this._associatedVariableName = state._getFreeVariableName("u_" + this.name);
+                // System values must use a stable, canonical uniform name derived from the
+                // enum (e.g. View → "u_View"), NOT the InputBlock's display name. Snippets
+                // commonly rename the block to lowercase "view"; that emitted "u_view", which
+                // on Babylon Native (GLSL→HLSL via SPIRV-Cross/bgfx) fails to reflect and
+                // binds as null. Result: vViewDepth stays 0 and clustered lighting goes dark.
+                // WebGL is more permissive about the name, so the bug is Native-only.
+                // Canonical names also match the well-known names used by non-node materials.
+                const baseName =
+                    this._systemValue !== null && this._systemValue !== undefined
+                        ? NodeMaterialSystemValues[this._systemValue]
+                        : this.name;
+                this._associatedVariableName = state._getFreeVariableName("u_" + baseName);
             }
 
             if (this.isConstant) {
