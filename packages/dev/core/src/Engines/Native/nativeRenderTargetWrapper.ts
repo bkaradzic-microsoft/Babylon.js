@@ -96,12 +96,48 @@ export class NativeRenderTargetWrapper extends RenderTargetWrapper {
         // setTexture on every frame, so the framebuffer must be dropped here: otherwise the pass keeps rendering
         // into the texture the framebuffer was originally built from, the read texture is never written and the
         // history stays black. Dropping it makes the next bind rebuild it against the texture actually written
-        // this frame. Only frame graph framebuffers are invalidated; other wrappers own a framebuffer that is
-        // built eagerly and is never rebuilt on bind.
-        if (this.__framebuffer && this._engine._isFrameGraphFramebuffer(this.__framebuffer)) {
-            this._framebuffer = null;
+            // this frame.
+            if (this.__framebuffer && this._engine._isFrameGraphFramebuffer(this.__framebuffer)) {
+                this._framebuffer = null;
+                return;
         }
-    }
+
+            // Multi non-FG wrappers (e.g. OIT depth-peeling) create a framebuffer eagerly, then replace every
+            // color attachment via MultiRenderTarget.setInternalTexture. bgfx cannot re-point attachments, so
+            // rebuild from the textures actually held by the wrapper.
+            //
+            // Only rebuild when a non-FG framebuffer already exists. Frame graph wrappers are created with
+            // dontCreateTextures and attach textures while _framebuffer is still null; building here would
+            // create a non-refcounted multi FB that bypasses _buildFrameGraphFramebuffer (regressed DoF/
+            // shadows/custom rendering when we rebuilt unconditionally on isMulti).
+            if (this.isMulti && this.__framebuffer) {
+                this._engine._createMultiRenderTargetFramebuffer(this);
+            }
+        }
+
+        /**
+         * Shares this wrapper's depth texture with another render target and rebuilds the destination
+         * framebuffer when needed so Native actually samples the shared depth (bgfx attaches depth at
+         * framebuffer creation time; a pointer-only shareDepth would leave the auto-depth from creation).
+         */
+        public override shareDepth(renderTarget: RenderTargetWrapper): void {
+            super.shareDepth(renderTarget);
+
+            const dest = renderTarget as NativeRenderTargetWrapper;
+            if (!dest?.isMulti || dest._engine !== this._engine) {
+                return;
+            }
+
+            if (dest._framebuffer && this._engine._isFrameGraphFramebuffer(dest._framebuffer)) {
+                dest._framebuffer = null;
+                return;
+            }
+
+            // Same gate as setTexture: only rebuild an already-built non-FG multi FB (OIT depth MRTs).
+            if (dest._framebuffer) {
+                this._engine._createMultiRenderTargetFramebuffer(dest);
+            }
+        }
 
     public override dispose(disposeOnlyFramebuffers = false): void {
         if (this._layerFramebuffers) {

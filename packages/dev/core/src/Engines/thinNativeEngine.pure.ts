@@ -1757,6 +1757,33 @@ export class ThinNativeEngine extends ThinEngine {
         this._alphaMode[targetIndex] = mode;
     }
 
+        /**
+         * Sets the current alpha blend equation (ADD / SUB / MAX / MIN / ...).
+         * Dual depth peeling (OIT) requires ALPHA_EQUATION_MAX so peel passes accumulate
+         * farthest/nearest depths. Native previously only wired blend *factors*; equations
+         * stayed at bgfx's default ADD and transparent peels never wrote useful depth.
+         * @param equation one of Constants.ALPHA_EQUATION_*
+         * @param targetIndex MRT attachment index (Native applies equation globally; kept for API parity)
+         */
+        public override setAlphaEquation(equation: number, targetIndex: number = 0): void {
+            if (this._alphaEquation[targetIndex] === equation) {
+                return;
+            }
+
+            this._alphaEquation[targetIndex] = equation;
+
+            const command = _native.Engine.COMMAND_SETBLENDEQUATION;
+            if (!command) {
+                // Older Babylon Native binaries predating blend-equation support.
+                return;
+            }
+
+            this._commandBufferEncoder.startEncodingCommand(command);
+            // Pass the Babylon Constants.ALPHA_EQUATION_* value; NativeEngine::SetBlendEquation maps it to bgfx.
+            this._commandBufferEncoder.encodeCommandArgAsUInt32(equation);
+            this._commandBufferEncoder.finishEncodingCommand();
+        }
+
     public override setInt(uniform: WebGLUniformLocation, int: number): boolean {
         if (!uniform) {
             return false;
@@ -3811,33 +3838,40 @@ export class ThinNativeEngine extends ThinEngine {
         const width = rtWrapper.width;
         const height = rtWrapper.height;
 
-        if (this._engine.createMultiFrameBuffer) {
-            rtWrapper._framebuffer = this._engine.createMultiFrameBuffer(
-                colorHandles,
-                width,
-                height,
-                rtWrapper._generateStencilBuffer,
-                rtWrapper._generateDepthBuffer,
-                rtWrapper._samples
-            );
-        } else {
-            // Older Babylon Native binaries (predating multi render target support) do not expose createMultiFrameBuffer.
-            // Fall back to a single-attachment framebuffer bound to the first color target so the scene keeps rendering.
-            // Warn once (limit 1): the framebuffer can be rebuilt many times during attachment setup/swaps.
-            Logger.Warn(
-                "createMultiFrameBuffer is not supported by this version of Babylon Native; multi render targets are unavailable. Falling back to a single-attachment framebuffer bound to the first color target.",
-                1
-            );
-            rtWrapper._framebuffer = this._engine.createFrameBuffer(
-                colorHandles[0],
-                width,
-                height,
-                rtWrapper._generateStencilBuffer,
-                rtWrapper._generateDepthBuffer,
-                rtWrapper._samples
-            );
-        }
-    }
+                // Prefer an explicit shared depth texture when present (OIT depth peeling shareDepth, FG depth
+                // attached after dontCreateTextures). Otherwise fall back to auto depth from _generateDepthBuffer.
+                const explicitDepth = rtWrapper._depthStencilTexture?._hardwareTexture?.underlyingResource as NativeTexture | undefined;
+                const generateDepthBuffer = !!explicitDepth || rtWrapper._generateDepthBuffer;
+
+                if (this._engine.createMultiFrameBuffer) {
+                    rtWrapper._framebuffer = this._engine.createMultiFrameBuffer(
+                        colorHandles,
+                        width,
+                        height,
+                        rtWrapper._generateStencilBuffer,
+                        generateDepthBuffer,
+                        rtWrapper._samples,
+                        undefined,
+                        explicitDepth
+                    );
+                } else {
+                    // Older Babylon Native binaries (predating multi render target support) do not expose createMultiFrameBuffer.
+                    // Fall back to a single-attachment framebuffer bound to the first color target so the scene keeps rendering.
+                    // Warn once (limit 1): the framebuffer can be rebuilt many times during attachment setup/swaps.
+                    Logger.Warn(
+                        "createMultiFrameBuffer is not supported by this version of Babylon Native; multi render targets are unavailable. Falling back to a single-attachment framebuffer bound to the first color target.",
+                        1
+                    );
+                    rtWrapper._framebuffer = this._engine.createFrameBuffer(
+                        colorHandles[0],
+                        width,
+                        height,
+                        rtWrapper._generateStencilBuffer,
+                        generateDepthBuffer,
+                        rtWrapper._samples
+                    );
+                }
+            }
 
     public override generateMipMapsForCubemap(_texture: InternalTexture, _unbind = true): void {
         // The WebGL path rebinds gl.TEXTURE_CUBE_MAP and calls gl.generateMipmap; both deref _gl, which is
