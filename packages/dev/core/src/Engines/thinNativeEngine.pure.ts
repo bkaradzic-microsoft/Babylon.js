@@ -406,23 +406,20 @@ export class ThinNativeEngine extends ThinEngine {
         { count: number; hardwareTexture: NativeHardwareTexture; colorCount: number; hasDepth: boolean; sharedDepthResource?: NativeTexture }
     >;
 
-    // Depth-sharing bookkeeping for frame graph render targets. A depth-stencil hardware texture must be
-    // BORROWED (attached as an explicit shared depth) by a color framebuffer only when that same depth is
-    // cleared by a standalone pass and consumed by color passes that render to DIFFERENT color targets (the
-    // geometry-buffer / motion-blur pattern), because such passes cannot be unified through the color-texture
-    // framebuffer cache. A depth that is only ever paired with a SINGLE color target (highlight layer, image
-    // processing, convolution, post-processes, the shadow main scene) must instead keep auto-generating (and
-    // inline-clearing) its own depth: borrowing a sampleable shared depth there leaves it effectively uncleared
-    // and the scene depth-tests to nothing (renders empty). Initialized in the constructor.
-    // - _frameGraphSharedDepths: depth texture uniqueIds determined to require sharing (monotonic; once true,
-    //   stays true). Keyed by InternalTexture.uniqueId (globally unique, never reused) rather than the bgfx
-    //   hardware resource handle, which the native backend POOLS and reuses across tests -- keying by the
-    //   pooled handle would let a disposed depth's sharing decision bleed onto an unrelated new depth.
-    // - _frameGraphDepthFirstColor: first color-attachment-0 uniqueId seen for a depth uniqueId (to detect a
-    //   second, different color target -> the depth is multi-target -> must be shared).
-    // - _frameGraphDepthWrappers: every color wrapper that references a depth uniqueId, so already-built
-    //   framebuffers can be invalidated (forcing a rebuild that borrows the now-shared depth) when sharing is
-    //   discovered late.
+    // Depth-sharing bookkeeping for frame graph render targets. A depth-stencil hardware texture is BORROWED
+        // (attached as an explicit shared depth) by a color framebuffer when:
+        //   (1) a standalone depth-clear / multi-color-target pattern requires one real depth buffer, or
+        //   (2) the color texture was already rendered into without this depth (e.g. bloom merge, then an
+        //       ObjectRenderer overlay that attaches an imported depth) — auto-generating a private depth then
+        //       leaves it uncleared (ObjectRenderer skips group-0 depth clear to preserve the prior color) and
+        //       every fragment fails LEQUAL (FrameGraph custom rendering / test 458).
+        // Depths that pair with a single color target from the first bind keep auto-generating (and inline-
+        // clearing) their own depth so sampleable InternalTexture depths that are never written stay out of the
+        // framebuffer until `_noteFrameGraphDepthSampled` promotes them (DoF / SSR / volumetric).
+        // Keyed by InternalTexture.uniqueId (never reused) rather than the bgfx hardware handle (pooled).
+        // - _frameGraphSharedDepths: depth uniqueIds known to require borrowing (monotonic).
+        // - _frameGraphDepthFirstColor: first color-attachment-0 uniqueId seen for a depth (detect multi-target).
+        // - _frameGraphDepthWrappers: color wrappers referencing a depth, so late sharing can invalidate caches.
     private _frameGraphSharedDepths: Set<number>;
     private _frameGraphDepthFirstColor: Map<number, number>;
     private _frameGraphDepthWrappers: Map<number, NativeRenderTargetWrapper[]>;
@@ -3028,26 +3025,29 @@ export class ThinNativeEngine extends ThinEngine {
         const generateStencilBuffer = nativeRTWrapper._generateStencilBuffer;
         const samples = textures[0].samples || nativeRTWrapper.samples || 1;
 
-        // When the frame graph supplies an explicit depth-stencil texture (e.g. the geometry buffer's shared
-        // depth), attach THAT texture as the depth attachment instead of auto-generating a private one, so this
-        // MRT and the separately-scheduled depth-clear pass share one depth buffer (matching WebGL/WebGPU). The
-        // shared depth texture is borrowed (not owned) by the framebuffer; the InternalTexture owns/disposes it.
-        // CRITICAL: only borrow the depth when a standalone 0-color depth-clear pass has registered it as
-        // externally cleared. A normal color render target that merely carries a _depthStencilTexture (highlight
-        // layer, image processing, convolution, post-processes, the shadow main scene) has NO separate clear
-        // pass, so its depth must stay auto-generated and inline-cleared; borrowing an uncleared shared depth
-        // makes the scene depth-test against garbage and render black.
-        // When the frame graph supplies an explicit depth-stencil texture, decide whether this color wrapper must
-        // BORROW it as a shared depth attachment (geometry-buffer / motion-blur pattern) or keep auto-generating
-        // its own inline-cleared depth (single-color-target render targets). See _markFrameGraphDepthShared /
-        // _isFrameGraphDepthShared and the field comments above for the full rationale. The shared depth is
-        // borrowed (not owned) by the framebuffer; the InternalTexture owns/disposes it.
-        const explicitDepthResource = depthStencilTexture?._hardwareTexture?.underlyingResource;
-        const shareExplicitDepth = !!explicitDepthResource && this._isFrameGraphDepthShared(depthStencilTexture!.uniqueId, textures[0].uniqueId, nativeRTWrapper);
-        const sharedDepthResource = shareExplicitDepth ? explicitDepthResource : undefined;
+        // When the frame graph supplies an explicit depth-stencil texture, decide whether this color wrapper
+                // must BORROW it (geometry-buffer / motion-blur / color-then-depth-overlay) or keep auto-generating
+                // an inline-cleared private depth (single-color-target first bind). See field comments above.
+                const explicitDepthResource = depthStencilTexture?._hardwareTexture?.underlyingResource;
+                const cached = hardwareTexture._frameGraphFramebuffer;
+                const cachedMeta = cached ? this._frameGraphFramebufferRefCount.get(cached) : undefined;
 
-        const cached = hardwareTexture._frameGraphFramebuffer;
-        const cachedMeta = cached ? this._frameGraphFramebufferRefCount.get(cached) : undefined;
+                let shareExplicitDepth = false;
+                if (explicitDepthResource && depthStencilTexture) {
+                    // Multi-target / already-shared / depth-only-clear registration.
+                    shareExplicitDepth = this._isFrameGraphDepthShared(depthStencilTexture.uniqueId, textures[0].uniqueId, nativeRTWrapper);
+                    // Color texture was previously bound as color-only (no depth) — e.g. bloom merge, then an
+                    // ObjectRenderer overlay that attaches an imported depth. A fresh auto-depth would never be
+                    // cleared (ObjectRenderer skips group-0 depth clear to preserve the prior color) and every
+                    // fragment fails LEQUAL. Only trigger on hasDepth===false; do NOT treat "prior auto-depth
+                    // vs explicit depth" as a reason to share — that regresses DoF/TAA/highlight which rely on
+                    // first-bind auto-depth until `_noteFrameGraphDepthSampled` promotes.
+                    if (!shareExplicitDepth && cachedMeta && !cachedMeta.hasDepth) {
+                        this._markFrameGraphDepthShared(depthStencilTexture.uniqueId);
+                        shareExplicitDepth = true;
+                    }
+                }
+                const sharedDepthResource = shareExplicitDepth ? explicitDepthResource : undefined;
 
         // Reuse the cached framebuffer when it is compatible: same color-attachment count, it has a depth
         // buffer when this pass needs one (a pass that does not need depth can safely reuse a depth framebuffer),
