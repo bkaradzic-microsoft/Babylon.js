@@ -1553,20 +1553,26 @@ export class ThinNativeEngine extends ThinEngine {
             getNativeStencilDepthFail(this._stencilOpDepthFail),
             getNativeStencilDepthPass(this._stencilOpStencilDepthPass),
             getNativeStencilFunc(this._stencilFunc),
-            this._stencilFuncRef
-        );
-    }
+                        this._stencilFuncRef,
+                        this._stencilFuncMask
+                    );
+                }
 
-    private _setStencil(mask: number, stencilOpFail: number, depthOpFail: number, depthOpPass: number, func: number, ref: number) {
-        this._commandBufferEncoder.startEncodingCommand(_native.Engine.COMMAND_SETSTENCIL);
-        this._commandBufferEncoder.encodeCommandArgAsUInt32(mask);
-        this._commandBufferEncoder.encodeCommandArgAsUInt32(stencilOpFail);
-        this._commandBufferEncoder.encodeCommandArgAsUInt32(depthOpFail);
-        this._commandBufferEncoder.encodeCommandArgAsUInt32(depthOpPass);
-        this._commandBufferEncoder.encodeCommandArgAsUInt32(func);
-        this._commandBufferEncoder.encodeCommandArgAsUInt32(ref);
-        this._commandBufferEncoder.finishEncodingCommand();
-    }
+                private _setStencil(mask: number, stencilOpFail: number, depthOpFail: number, depthOpPass: number, func: number, ref: number, funcMask: number = 0xff) {
+                    this._commandBufferEncoder.startEncodingCommand(_native.Engine.COMMAND_SETSTENCIL);
+                    this._commandBufferEncoder.encodeCommandArgAsUInt32(mask);
+                    this._commandBufferEncoder.encodeCommandArgAsUInt32(stencilOpFail);
+                    this._commandBufferEncoder.encodeCommandArgAsUInt32(depthOpFail);
+                    this._commandBufferEncoder.encodeCommandArgAsUInt32(depthOpPass);
+                    this._commandBufferEncoder.encodeCommandArgAsUInt32(func);
+                    this._commandBufferEncoder.encodeCommandArgAsUInt32(ref);
+                    // Stencil function mask (gl.stencilFunc mask / BGFX_STENCIL_FUNC_RMASK). Required for
+                    // HighlightLayer, which compares only the glowing-mesh reference bits while ignoring
+                    // lower reserved bits. Without this, Native always used 0xFF and the outer/inner glow
+                    // stencil tests matched the wrong fragments.
+                    this._commandBufferEncoder.encodeCommandArgAsUInt32(funcMask & 0xff);
+                    this._commandBufferEncoder.finishEncodingCommand();
+                }
 
     /**
      * Enable or disable the stencil buffer
@@ -1641,12 +1647,13 @@ export class ThinNativeEngine extends ThinEngine {
     }
 
     /**
-     * Sets the current stencil mask
-     * @param mask defines the new stencil mask to use
+         * Sets the current stencil function mask
+         * @param mask defines the new stencil function mask to use
      */
     public override setStencilFunctionMask(mask: number) {
         this._stencilFuncMask = mask;
-    }
+            this.applyStencil();
+        }
 
     /**
      * Sets the stencil operation to use when stencil fails
