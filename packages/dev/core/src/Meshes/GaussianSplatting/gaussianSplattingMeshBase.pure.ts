@@ -2669,6 +2669,34 @@ export class GaussianSplattingMeshBase extends Mesh {
     }
 
     /**
+     * Applies a pending {@link _delayedTextureUpdate} to the GPU textures and clears it.
+     *
+     * On the Web worker path this normally runs when the sort worker replies (so the new centers
+     * land in the same frame as the new splat-index order). Babylon Native has no worker and uses
+     * `Native.sortSplats` instead, which never hits that reply handler — without an explicit flush
+     * here, `updateData` / `bakeTransformIntoVertices` would leave the old centers/covariances on
+     * the GPU forever (GS Bake Transforms residual ~84%).
+     * @internal
+     */
+    protected _flushDelayedTextureUpdate(): void {
+        if (!this._delayedTextureUpdate) {
+            return;
+        }
+        const vertexCountPadded = (this._vertexCount + 15) & ~0xf;
+        const textureSize = this._getTextureSize(vertexCountPadded);
+        this._updateSubTextures(
+            this._delayedTextureUpdate.centers,
+            this._delayedTextureUpdate.covA,
+            this._delayedTextureUpdate.covB,
+            this._delayedTextureUpdate.colors,
+            0,
+            textureSize.y,
+            this._delayedTextureUpdate.sh
+        );
+        this._delayedTextureUpdate = null;
+    }
+
+    /**
      * Creates (or recreates) the MRT-backed data atlas at the given size and points the four core data
      * textures at its attachments. The attachments use the same decoded GS layout as {@link GaussianSplattingWorkBuffer}
      * — [centers F32, covA HALF_FLOAT, covB HALF_FLOAT, colors U8], all RGBA — so a streaming engine can render
@@ -2869,6 +2897,9 @@ export class GaussianSplattingMeshBase extends Mesh {
                 this._worker.postMessage({ command: GaussianSplattingSortWorkerCommand.POSITIONS, positions, vertexCount }, [positions.buffer]);
                 // Re-sync the active interval set in case the source splat count changed.
                 this._postIntervalsToWorker();
+            } else {
+                // No sort-worker reply will flush the delayed upload (Native / no-worker path).
+                this._flushDelayedTextureUpdate();
             }
 
             // Handle SH textures in update path - create if they don't exist. Skip when the SH atlas is
@@ -3642,20 +3673,7 @@ export class GaussianSplattingMeshBase extends Mesh {
                 }
             }
             this.forcedInstanceCount = Math.max(renderedPadded >> 4, 1);
-            if (this._delayedTextureUpdate) {
-                const vertexCountPadded = (this._vertexCount + 15) & ~0xf;
-                const textureSize = this._getTextureSize(vertexCountPadded);
-                this._updateSubTextures(
-                    this._delayedTextureUpdate.centers,
-                    this._delayedTextureUpdate.covA,
-                    this._delayedTextureUpdate.covB,
-                    this._delayedTextureUpdate.colors,
-                    0,
-                    textureSize.y,
-                    this._delayedTextureUpdate.sh
-                );
-                this._delayedTextureUpdate = null;
-            }
+            this._flushDelayedTextureUpdate();
 
             // get mesh for camera and update its instance buffer
             const cameraViewInfos = this._cameraViewInfos.get(cameraId);
