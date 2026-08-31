@@ -4756,7 +4756,9 @@ export class ThinNativeEngine extends ThinEngine {
                 case ComputeBindingType.UniformBuffer: {
                     const native = this._getComputeUniformBridge(binding.object as UniformBuffer);
                     if (native) {
-                        buffers.push({ stage, native, access: 0 /* Read */ });
+                        // Native D3D path compiles every SSBO as a UAV (force_storage_buffer_as_uav).
+                        // Access Read would bind an SRV and leave the UAV register empty.
+                        buffers.push({ stage, native, access: 2 /* ReadWrite */ });
                     }
                     break;
                 }
