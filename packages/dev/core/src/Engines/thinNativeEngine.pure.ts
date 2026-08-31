@@ -571,11 +571,11 @@ export class ThinNativeEngine extends ThinEngine {
             forceBitmapOverHTMLImageElement: true,
             supportRenderAndCopyToLodForFloatTextures: false,
             // Native can attach an explicit depth/stencil texture to a render target (see
-            // _createDepthStencilTexture) and sample it afterwards, so consumers such as ShadowGenerator
-            // may allocate a readable depth attachment for the shadow map. Hardware comparison samplers
-            // are still unavailable (supportShadowSamplers stays false); the depth is sampled as data.
+                        // _createDepthStencilTexture) and sample it afterwards. Hardware comparison samplers are
+                        // available through bgfx BGFX_SAMPLER_COMPARE_* (set via updateTextureComparisonFunction),
+                        // which is what ShadowGenerator needs for FILTER_PCF / FILTER_PCSS (incl. cascaded shadows).
             supportDepthStencilTexture: true,
-            supportShadowSamplers: false,
+                        supportShadowSamplers: true,
             uniformBufferHardCheckMatrix: false,
             // Native supports GPU cube prefiltering (HDRFiltering / HDRIrradianceFiltering): the render path
             // binds a specific cube-face + mip via bindFramebuffer(faceIndex, lodLevel) and convolves the
@@ -2883,38 +2883,36 @@ export class ThinNativeEngine extends ThinEngine {
         texture.type = Constants.TEXTURETYPE_UNSIGNED_BYTE;
         texture._comparisonFunction = options.comparisonFunction ?? 0;
 
-        // Populate the standard depth/stencil texture metadata (mirrors ThinEngine._setupDepthStencilTexture).
-        // In particular `samples` must be set so consumers such as the FrameGraph texture manager report the
-        // correct sample count; leaving it at the InternalTexture default (0) breaks FrameGraph MSAA
-        // depth/output sample-count validation.
-        texture.baseWidth = width;
-        texture.baseHeight = height;
-        texture.width = width;
-        texture.height = height;
-        texture.isReady = true;
-        texture.samples = samples;
-        texture.generateMipMaps = false;
-        texture.type = Constants.TEXTURETYPE_UNSIGNED_BYTE;
+
 
         if (nativeRTWrapper._framebuffers) {
             // Layered (2D array) or cube render target: the color framebuffers were created one-per-layer
             // (see createRenderTargetTexture / createRenderTargetCubeTexture). When the color RTT was built
             // without a depth buffer (e.g. cascaded shadow maps create the RTT with generateDepthBuffer=false
             // and then call createDepthStencilTexture), rebuild each per-layer framebuffer so it carries a
-            // depth/stencil attachment for the depth test. A single shared _framebufferDepthStencil would be
-            // ignored because bindFramebuffer selects _framebuffers[layer] first.
+            // *shared sampleable* depth/stencil array attachment. PCF binds the whole array as
+            // sampler2DArrayShadow; each cascade layer framebuffer writes into its own depth slice.
+            // A single shared _framebufferDepthStencil would be ignored because bindFramebuffer selects
+            // _framebuffers[layer] first.
             const colorTexture = rtWrapper.texture;
             if (colorTexture && colorTexture._hardwareTexture) {
                 const nativeColor = colorTexture._hardwareTexture.underlyingResource;
+                const nativeDepth = texture._hardwareTexture!.underlyingResource;
                 const layerCount = nativeRTWrapper._framebuffers.length;
                 for (const fb of nativeRTWrapper._framebuffers) {
                     this._releaseFramebufferObjects(fb);
                 }
                 const framebuffers: NativeFramebuffer[] = [];
                 for (let layer = 0; layer < layerCount; layer++) {
-                    framebuffers.push(this._engine.createFrameBuffer(nativeColor, width, height, generateStencil, true, samples, layer));
+                    // First call creates the multi-layer sampleable depth and aliases it into nativeDepth;
+                    // subsequent calls borrow the same depth array and attach the matching layer.
+                    framebuffers.push(
+                        this._engine.createMultiFrameBuffer([nativeColor], width, height, generateStencil, true, samples, [layer], nativeDepth)
+                    );
                 }
                 nativeRTWrapper._framebuffers = framebuffers;
+                this._setTextureSampling(nativeDepth, getNativeSamplingMode(texture.samplingMode));
+                this.updateTextureComparisonFunction(texture, texture._comparisonFunction);
             }
             return texture;
         }
@@ -2926,6 +2924,7 @@ export class ThinNativeEngine extends ThinEngine {
         // point, which is how CreateFrameBufferImpl recognizes a request for a readable depth attachment that
         // it aliases back into the supplied texture so it can be sampled afterwards.
         const colorResource = rtWrapper.texture?._hardwareTexture?.underlyingResource;
+        const nativeDepth = texture._hardwareTexture!.underlyingResource;
         const framebuffer = this._engine.createMultiFrameBuffer(
             colorResource ? [colorResource] : [],
             width,
@@ -2934,9 +2933,11 @@ export class ThinNativeEngine extends ThinEngine {
             true,
             samples,
             undefined,
-            texture._hardwareTexture!.underlyingResource
+            nativeDepth
         );
         nativeRTWrapper._framebufferDepthStencil = framebuffer;
+        this._setTextureSampling(nativeDepth, getNativeSamplingMode(texture.samplingMode));
+        this.updateTextureComparisonFunction(texture, texture._comparisonFunction);
         return texture;
     }
 
@@ -2946,11 +2947,14 @@ export class ThinNativeEngine extends ThinEngine {
      * @param comparisonFunction The comparison function to set, 0 if no comparison required
      */
     public updateTextureComparisonFunction(texture: InternalTexture, comparisonFunction: number): void {
-        // Babylon Native has no hardware comparison samplers (see _features.supportShadowSamplers): shadow
-        // maps are sampled as plain data textures and the comparison is performed in the shader. There is no
-        // sampler state to update, but engine-agnostic code (LightingVolume, for instance) toggles the
-        // comparison function around a copy and expects the value to be recorded, so keep it in sync.
         texture._comparisonFunction = comparisonFunction;
+        // Drive bgfx BGFX_SAMPLER_COMPARE_* so PCF/PCSS shaders (sampler2DShadow / sampler2DArrayShadow)
+        // get hardware depth compares. Engine-agnostic callers (LightingVolume) also toggle this around
+        // a copy and expect the recorded value to stay in sync even when the hardware texture is missing.
+        const nativeTexture = texture._hardwareTexture?.underlyingResource;
+        if (nativeTexture && this._engine.setTextureComparisonFunction) {
+            this._engine.setTextureComparisonFunction(nativeTexture, comparisonFunction);
+        }
     }
 
     /**
