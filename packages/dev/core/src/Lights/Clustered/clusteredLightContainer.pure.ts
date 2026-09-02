@@ -123,6 +123,10 @@ export class ClusteredLightContainer extends Light {
     // The lights sorted by depth
     private readonly _sortedLights: (PointLight | SpotLight)[] = [];
 
+    // Active (per-camera) light data / tile-mask resources. Multi-camera layouts bind a
+    // distinct set per camera so a later camera never rewrites a texture the previous
+    // camera already sampled in the same frame — on Native/bgfx that sample-then-write
+    // hazard discards the swapchain backbuffer and wipes the earlier camera's half.
     private _lightDataBuffer: Float32Array;
     private _lightDataTexture: RawTexture;
     private _lightDataRenderId = -1;
@@ -130,6 +134,16 @@ export class ClusteredLightContainer extends Light {
     private _tileMaskBatches = -1;
     private _tileMaskTexture: RenderTargetTexture;
     private _tileMaskBuffer: Nullable<StorageBuffer>;
+
+    private readonly _cameraPassResources = new Map<
+        number,
+        {
+            lightDataBuffer: Float32Array;
+            lightDataTexture: RawTexture;
+            lightDataRenderId: number;
+            tileMaskTexture: RenderTargetTexture;
+        }
+    >();
 
     private _horizontalTiles = 64;
     /**
@@ -308,25 +322,21 @@ export class ClusteredLightContainer extends Light {
         return LightConstants.LIGHTTYPEID_CLUSTERED_CONTAINER;
     }
 
-    /** @internal */
-    public _updateBatches(camera: Nullable<Camera> = null): RenderTargetTexture {
-        this._camera = camera;
-        this._proxyMesh.isVisible = this._sortedLights.length > 0;
-
-        // Ensure space for atleast 1 batch
-        const batches = Math.max(Math.ceil(this._sortedLights.length / this._batchSize), 1);
-        if (this._tileMaskBatches >= batches) {
-            this._proxyMesh.thinInstanceCount = this._sortedLights.length;
-            return this._tileMaskTexture;
+    private _disposeCameraPassResources(): void {
+        for (const pass of this._cameraPassResources.values()) {
+            pass.lightDataTexture.dispose();
+            pass.tileMaskTexture.dispose();
         }
+        this._cameraPassResources.clear();
+    }
+
+    private _createCameraPassResources(batches: number, cameraId: number) {
         const engine = this.getEngine();
-        // Round up to a batch size so we don't have to reallocate as often
         const maxLights = batches * this._batchSize;
 
-        this._lightDataBuffer = new Float32Array(20 * maxLights);
-        this._lightDataTexture?.dispose();
-        this._lightDataTexture = new RawTexture(
-            this._lightDataBuffer,
+        const lightDataBuffer = new Float32Array(20 * maxLights);
+        const lightDataTexture = new RawTexture(
+            lightDataBuffer,
             5,
             maxLights,
             Constants.TEXTUREFORMAT_RGBA,
@@ -336,30 +346,34 @@ export class ClusteredLightContainer extends Light {
             Constants.TEXTURE_NEAREST_SAMPLINGMODE,
             Constants.TEXTURETYPE_FLOAT
         );
-        this._lightDataTexture.name = "LightDataTexture_clustered_" + this.name;
-        this._proxyMaterial.setTexture("lightDataTexture", this._lightDataTexture);
+        lightDataTexture.name = "LightDataTexture_clustered_" + this.name + "_cam" + cameraId;
 
-        this._tileMaskTexture?.dispose();
         const textureSize = { width: this._horizontalTiles, height: this._verticalTiles };
         if (!engine.isWebGPU) {
             // In WebGL we shift the light proxy by the batch number
             textureSize.height *= batches;
         }
-        this._tileMaskTexture = new RenderTargetTexture("TileMaskTexture", textureSize, this._scene, {
+        const tileMaskTexture = new RenderTargetTexture("TileMaskTexture_cam" + cameraId, textureSize, this._scene, {
             // We don't write anything on WebGPU so make it as small as possible
             type: engine.isWebGPU ? Constants.TEXTURETYPE_UNSIGNED_BYTE : Constants.TEXTURETYPE_FLOAT,
             format: Constants.TEXTUREFORMAT_RED,
             generateDepthBuffer: false,
         });
 
-        this._tileMaskTexture.renderParticles = false;
-        this._tileMaskTexture.renderSprites = false;
-        this._tileMaskTexture.noPrePassRenderer = true;
-        this._tileMaskTexture.renderList = [this._proxyMesh];
+        tileMaskTexture.renderParticles = false;
+        tileMaskTexture.renderSprites = false;
+        tileMaskTexture.noPrePassRenderer = true;
+        // Tile mask is addressed by absolute gl_FragCoord (full framebuffer), so it must
+        // cover the whole texture even when the active camera uses a sub-viewport
+        // (multi-camera layouts). Honoring the camera viewport would only fill a strip of
+        // the mask; later cameras then sample empty tiles and go black on Native where
+        // per-framebuffer viewport state can also leave the previous half un-updated.
+        tileMaskTexture.ignoreCameraViewport = true;
+        tileMaskTexture.renderList = [this._proxyMesh];
 
         let currentRenderTarget: Nullable<RenderTargetWrapper> = null;
 
-        this._tileMaskTexture.onBeforeBindObservable.add(() => {
+        tileMaskTexture.onBeforeBindObservable.add(() => {
             currentRenderTarget = engine._currentRenderTarget;
             this._updateLightData();
             // On WebGPU, clear the storage buffer here (before bindFramebuffer) because
@@ -371,7 +385,7 @@ export class ClusteredLightContainer extends Light {
             }
         });
 
-        this._tileMaskTexture.onAfterUnbindObservable.add(() => {
+        tileMaskTexture.onAfterUnbindObservable.add(() => {
             if (engine._currentRenderTarget !== currentRenderTarget) {
                 if (!currentRenderTarget) {
                     engine.restoreDefaultFramebuffer();
@@ -381,29 +395,69 @@ export class ClusteredLightContainer extends Light {
             }
         });
 
-        this._tileMaskTexture.onClearObservable.add(() => {
+        tileMaskTexture.onClearObservable.add(() => {
             if (!engine.isWebGPU) {
-                // Only clear the texture on WebGL
                 engine.clear({ r: 0, g: 0, b: 0, a: 1 }, true, false);
             }
         });
 
-        if (engine.isWebGPU) {
-            // WebGPU also needs a storage buffer to write to
-            this._tileMaskBuffer?.dispose();
-            const bufferSize = this._horizontalTiles * this._verticalTiles * batches * 4;
-            this._tileMaskBuffer = new StorageBuffer(<WebGPUEngine>engine, bufferSize);
-            this._proxyMaterial.setStorageBuffer("tileMaskBuffer", this._tileMaskBuffer);
+        return {
+            lightDataBuffer,
+            lightDataTexture,
+            lightDataRenderId: -1,
+            tileMaskTexture,
+        };
+    }
+
+    private _activateCameraPass(pass: { lightDataBuffer: Float32Array; lightDataTexture: RawTexture; lightDataRenderId: number; tileMaskTexture: RenderTargetTexture }): void {
+        this._lightDataBuffer = pass.lightDataBuffer;
+        this._lightDataTexture = pass.lightDataTexture;
+        this._lightDataRenderId = pass.lightDataRenderId;
+        this._tileMaskTexture = pass.tileMaskTexture;
+        this._proxyMaterial.setTexture("lightDataTexture", this._lightDataTexture);
+    }
+
+    /** @internal */
+    public _updateBatches(camera: Nullable<Camera> = null): RenderTargetTexture {
+        this._camera = camera ?? this._scene.activeCamera;
+        this._proxyMesh.isVisible = this._sortedLights.length > 0;
+
+        // Ensure space for atleast 1 batch
+        const batches = Math.max(Math.ceil(this._sortedLights.length / this._batchSize), 1);
+        if (this._tileMaskBatches < batches) {
+            // Batch capacity grew — drop every per-camera set so they rebuild at the new size.
+            this._disposeCameraPassResources();
+            this._tileMaskBatches = batches;
+
+            const engine = this.getEngine();
+            const maxLights = batches * this._batchSize;
+
+            if (engine.isWebGPU) {
+                // WebGPU also needs a storage buffer to write to (shared across cameras;
+                // cleared on each tile-mask bind).
+                this._tileMaskBuffer?.dispose();
+                const bufferSize = this._horizontalTiles * this._verticalTiles * batches * 4;
+                this._tileMaskBuffer = new StorageBuffer(<WebGPUEngine>engine, bufferSize);
+                this._proxyMaterial.setStorageBuffer("tileMaskBuffer", this._tileMaskBuffer);
+            }
+
+            this._proxyMaterial.setVector3("tileMaskResolution", new Vector3(this._horizontalTiles, this.verticalTiles, batches));
+
+            // We don't actually use the matrix data but we need enough capacity for the lights
+            if (this._proxyMesh.thinInstanceSetBuffer) {
+                this._proxyMesh.thinInstanceSetBuffer("matrix", new Float32Array(maxLights * 16));
+            }
         }
 
-        this._proxyMaterial.setVector3("tileMaskResolution", new Vector3(this._horizontalTiles, this.verticalTiles, batches));
-
-        // We don't actually use the matrix data but we need enough capacity for the lights
-        if (this._proxyMesh.thinInstanceSetBuffer) {
-            this._proxyMesh.thinInstanceSetBuffer("matrix", new Float32Array(maxLights * 16));
+        const cameraId = this._camera?.uniqueId ?? 0;
+        let pass = this._cameraPassResources.get(cameraId);
+        if (!pass) {
+            pass = this._createCameraPassResources(batches, cameraId);
+            this._cameraPassResources.set(cameraId, pass);
         }
+
+        this._activateCameraPass(pass);
         this._proxyMesh.thinInstanceCount = this._sortedLights.length;
-        this._tileMaskBatches = batches;
         return this._tileMaskTexture;
     }
 
@@ -422,6 +476,11 @@ export class ClusteredLightContainer extends Light {
             return;
         }
         this._lightDataRenderId = renderId;
+        // Keep the per-camera pass entry in sync so a later activate restores the right id.
+        const pass = this._cameraPassResources.get(camera.uniqueId);
+        if (pass) {
+            pass.lightDataRenderId = renderId;
+        }
 
         // Resort lights based on distance from camera
         const view = camera.getViewMatrix();
@@ -539,8 +598,7 @@ export class ClusteredLightContainer extends Light {
         for (const light of this._lights) {
             light.dispose(doNotRecurse, disposeMaterialAndTextures);
         }
-        this._lightDataTexture.dispose();
-        this._tileMaskTexture.dispose();
+        this._disposeCameraPassResources();
         this._tileMaskBuffer?.dispose();
         this._proxyMesh.dispose(doNotRecurse, disposeMaterialAndTextures);
         super.dispose(doNotRecurse, disposeMaterialAndTextures);
