@@ -71,14 +71,21 @@ export class CascadedShadowGenerator extends ShadowGenerator {
     public static MAX_CASCADES_COUNT = 4;
 
     protected override _validateFilter(filter: number): number {
-        if (filter === ShadowGenerator.FILTER_NONE || filter === ShadowGenerator.FILTER_PCF || filter === ShadowGenerator.FILTER_PCSS) {
-            return filter;
+            if (filter === ShadowGenerator.FILTER_NONE || filter === ShadowGenerator.FILTER_PCF || filter === ShadowGenerator.FILTER_PCSS) {
+                // Native/bgfx cannot sample CSM color cascade arrays for FILTER_NONE hard shadows
+                // (always-lit receivers). Depth-array PCF is correct and is already the CSM default;
+                // remap filter=0 so multi-SG playgrounds still cast. forceSingleSampleFrameGraphTextures
+                // is the Native-only feature flag used as the engine gate.
+                if (filter === ShadowGenerator.FILTER_NONE && this._scene?.getEngine()?._features?.forceSingleSampleFrameGraphTextures) {
+                    return ShadowGenerator.FILTER_PCF;
+                }
+                return filter;
+            }
+
+            Logger.Error('Unsupported filter "' + filter + '"!');
+
+            return ShadowGenerator.FILTER_NONE;
         }
-
-        Logger.Error('Unsupported filter "' + filter + '"!');
-
-        return ShadowGenerator.FILTER_NONE;
-    }
 
     /**
      * Gets or sets the actual darkness of the soft shadows while using PCSS filtering (value between 0. and 1.)
@@ -1012,9 +1019,9 @@ export class CascadedShadowGenerator extends ShadowGenerator {
             effect.setFloat("penumbraDarkness" + lightIndex, this.penumbraDarkness);
             light._uniformBuffer.updateFloat4("shadowsInfo", this.getDarkness(), 1 / width, this._contactHardeningLightSizeUVRatio * width, this.frustumEdgeFalloff, lightIndex);
         } else {
-            effect.setTexture("shadowTexture" + lightIndex, shadowMap);
-            light._uniformBuffer.updateFloat4("shadowsInfo", this.getDarkness(), width, 1 / width, this.frustumEdgeFalloff, lightIndex);
-        }
+                    effect.setTexture("shadowTexture" + lightIndex, shadowMap);
+                    light._uniformBuffer.updateFloat4("shadowsInfo", this.getDarkness(), width, 1 / width, this.frustumEdgeFalloff, lightIndex);
+                }
 
         light._uniformBuffer.updateFloat2(
             "depthValues",
