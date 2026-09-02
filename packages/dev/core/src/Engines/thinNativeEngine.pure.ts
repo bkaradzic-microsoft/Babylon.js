@@ -3898,19 +3898,21 @@ export class ThinNativeEngine extends ThinEngine {
     public override bindAttachments(attachments: number[]): void {
         // bgfx has no gl.drawBuffers equivalent, so draw calls always write to every color attachment of
         // the bound framebuffer. Clears, however, can be masked per attachment (bgfx clear color palette),
-        // and code such as PrePassRenderer._clear() relies on that: it clears the non-default attachments
-        // to zero and then lets the scene clear only the default one. Record the selection so the next
-        // clear() can honour it.
+        // and code such as PrePassRenderer._clear() / ThinDepthPeelingRenderer relies on that.
+        //
+        // attachments[i] is the attachment index to enable, or -1 to skip (see buildTextureLayout).
+        // Do NOT promote "every entry in this array is enabled" to 0xff: OIT passes layout [0] (only
+        // the depth attachment) as a length-1 array, and treating that as "all attachments" would
+        // clear the shared front/back color MRTs with the depth clear value (-99999).
         let mask = 0;
         for (let i = 0; i < attachments.length; i++) {
-            if (attachments[i] >= 0) {
-                mask |= 1 << i;
+            const attachmentIndex = attachments[i];
+            if (attachmentIndex >= 0) {
+                mask |= 1 << attachmentIndex;
             }
         }
 
-        // A selection covering every attachment needs no masking (and lets the backend take the cheaper
-        // non-palette clear path).
-        this._clearAttachmentMask = mask === (1 << attachments.length) - 1 ? _AllAttachmentsMask : mask;
+        this._clearAttachmentMask = mask === 0 ? _AllAttachmentsMask : mask;
     }
 
     public override buildTextureLayout(textureStatus: boolean[], _backBufferLayout = false): number[] {
