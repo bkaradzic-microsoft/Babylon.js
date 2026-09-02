@@ -267,6 +267,23 @@ export class FrameGraph implements IDisposable {
 
             await this._whenAsynchronousInitializationDoneAsync();
 
+            // Some engines (Babylon Native) cannot resolve a multisampled depth attachment into a shader-readable
+            // single-sample depth texture, and shared MSAA depth (BGFX_TEXTURE_MSAA_SAMPLE) also produces wrong
+            // depth ordering for Geometry/ObjectRenderer multi-RTT. Clamp BEFORE record so GeometryRendererTask
+            // creates geometry targets with samples=1 and the depth/geometry samples check stays consistent.
+            // Clamping only after record left task.samples=1 from a prior build while NRG rebuild recreated
+            // depth inputs at their original samples=4 (see FrameGraph nrge SSR HillValley rebuild).
+            if (this.engine._features.forceSingleSampleFrameGraphTextures) {
+                for (const task of this._tasks) {
+                    const anyTask = task as { samples?: number };
+                    if (typeof anyTask.samples === "number" && anyTask.samples > 1) {
+                        anyTask.samples = 1;
+                    }
+                }
+                // Input-block textures are created during NodeRenderGraph block build, before this method runs.
+                this.textureManager._forceAllTexturesSingleSample();
+            }
+
             for (const task of this._tasks) {
                 task._reset();
 
@@ -279,20 +296,10 @@ export class FrameGraph implements IDisposable {
                 this._currentProcessedTask = null;
             }
 
-            // Some engines (Babylon Native) cannot resolve a multisampled depth attachment into a shader readable
-                        // single-sample depth texture, and shared MSAA depth (BGFX_TEXTURE_MSAA_SAMPLE) also
-                        // produces wrong depth ordering for Geometry/ObjectRenderer multi-RTT. Clamp every frame-graph
-                        // texture that was requested with samples>1 down to 1 before allocation so depth and colors
-                        // stay matched (a framebuffer must have one sample count across all attachments).
-                        if (this.engine._features.forceSingleSampleFrameGraphTextures) {
-                            this.textureManager._forceAllTexturesSingleSample();
-                            for (const task of this._tasks) {
-                                const anyTask = task as { samples?: number };
-                                if (typeof anyTask.samples === "number" && anyTask.samples > 1) {
-                                    anyTask.samples = 1;
-                                }
-                            }
-                        }
+            // Belt-and-suspenders: any texture registered during record with samples>1 is clamped before allocate.
+            if (this.engine._features.forceSingleSampleFrameGraphTextures) {
+                this.textureManager._forceAllTexturesSingleSample();
+            }
 
             this.textureManager._allocateTextures(this.optimizeTextureAllocation ? this._tasks : undefined);
             for (const task of this._tasks) {

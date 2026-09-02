@@ -303,6 +303,13 @@ export class FrameGraphTextureManager {
      * @returns The handle to the texture
      */
     public createRenderTargetTexture(name: string, creationOptions: FrameGraphTextureCreationOptions, handle?: FrameGraphTextureHandle): FrameGraphTextureHandle {
+        const options = FrameGraphTextureManager.CloneTextureOptions(creationOptions.options, undefined, true);
+        // Engines that cannot sample MSAA depth as sampler2D (Babylon Native/bgfx) force all frame-graph
+        // textures to a single sample. Clamp at creation so InputBlock textures registered before
+        // FrameGraph.buildAsync match GeometryRendererTask.samples after the pre-record clamp.
+        if (this.engine._features.forceSingleSampleFrameGraphTextures && (options.samples ?? 1) > 1) {
+            options.samples = 1;
+        }
         return this._createHandleForTexture(
             name,
             null,
@@ -310,7 +317,7 @@ export class FrameGraphTextureManager {
                 size: textureSizeIsObject(creationOptions.size) ? { ...creationOptions.size } : creationOptions.size,
                 sizeIsPercentage: creationOptions.sizeIsPercentage,
                 isHistoryTexture: creationOptions.isHistoryTexture,
-                options: FrameGraphTextureManager.CloneTextureOptions(creationOptions.options, undefined, true),
+                options,
             },
             this._isRecordingTask ? FrameGraphTextureNamespace.Task : FrameGraphTextureNamespace.Graph,
             handle
