@@ -27,12 +27,18 @@ export class BoundingInfoHelper {
     private async _initializePlatformAsync() {
         if (!this._platform) {
             const supportsComputeShaders = this._engine.getCaps().supportComputeShaders;
+            // Native advertises compute but lacks readFromMultipleStorageBuffers; the GPU path
+            // would fail, so fall back to the CPU helper there. WebGPU has the multi-buffer read.
             if (supportsComputeShaders && "readFromMultipleStorageBuffers" in this._engine) {
-                const module = await import("./computeShaderBoundingHelper");
-                this._platform = new module.ComputeShaderBoundingHelper(this._engine);
+                const [{ ComputeShaderBoundingHelper }] = await Promise.all([import("./computeShaderBoundingHelper.pure"), import("../../ShadersWGSL/boundingInfo.compute")]);
+                this._platform = new ComputeShaderBoundingHelper(this._engine);
             } else if (this._engine.getCaps().supportTransformFeedbacks) {
-                const module = await import("./transformFeedbackBoundingHelper");
-                this._platform = new module.TransformFeedbackBoundingHelper(this._engine as ThinEngine);
+                const [{ TransformFeedbackBoundingHelper }] = await Promise.all([
+                    import("./transformFeedbackBoundingHelper.pure"),
+                    import("../../Shaders/gpuTransform.vertex"),
+                    import("../../Shaders/gpuTransform.fragment"),
+                ]);
+                this._platform = new TransformFeedbackBoundingHelper(this._engine as ThinEngine);
             } else if (supportsComputeShaders) {
                 const module = await import("./cpuBoundingInfoHelper");
                 this._platform = new module.CpuBoundingInfoHelper();
