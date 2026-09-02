@@ -858,7 +858,11 @@ export class ThinNativeEngine extends ThinEngine {
         this._commandBufferEncoder.encodeCommandArgAsFloat32(color ? color.r : 0);
         this._commandBufferEncoder.encodeCommandArgAsFloat32(color ? color.g : 0);
         this._commandBufferEncoder.encodeCommandArgAsFloat32(color ? color.b : 0);
-        this._commandBufferEncoder.encodeCommandArgAsFloat32(color ? color.a : 1);
+                // Playgrounds often assign Color3 to scene.clearColor; Color3 has no .a, so
+                // `color.a` is undefined and was encoded as 0 → transparent clear. PNG
+                // screenshots then show black sky on dark HTML backgrounds while RGB still
+                // matches (pixel compare ignores alpha). Default missing alpha to opaque.
+                this._commandBufferEncoder.encodeCommandArgAsFloat32(color ? (color.a ?? 1) : 1);
         this._commandBufferEncoder.encodeCommandArgAsUInt32(depth ? 1 : 0);
         this._commandBufferEncoder.encodeCommandArgAsFloat32(depth && this.useReverseDepthBuffer ? 0 : 1);
         this._commandBufferEncoder.encodeCommandArgAsUInt32(stencil ? 1 : 0);
@@ -1499,6 +1503,13 @@ export class ThinNativeEngine extends ThinEngine {
      */
     public override setDepthWrite(enable: boolean): void {
         this._depthWrite = enable;
+        // Keep depthCullingState.depthMask in sync. applyStates() reconciles native depth write
+        // from depthMask; if it stays true after setDepthWrite(false), the next applyStates()
+        // (e.g. during particle/material draws) silently turns WRITE_Z back on. Coplanar
+        // triangle-strip particle quads then lose the second tri to DEPTH_LESS.
+        if (this._depthCullingState) {
+            this._depthCullingState.depthMask = enable;
+        }
         this._commandBufferEncoder.startEncodingCommand(_native.Engine.COMMAND_SETDEPTHWRITE);
         this._commandBufferEncoder.encodeCommandArgAsUInt32(Number(enable));
         this._commandBufferEncoder.finishEncodingCommand();
@@ -4577,11 +4588,14 @@ export class ThinNativeEngine extends ThinEngine {
         const view = typeof data === "number" ? undefined : ArrayBuffer.isView(data) ? data : new Float32Array(data);
         const byteLength = typeof data === "number" ? data : view!.byteLength;
         const asVertexBuffer = (creationFlags & Constants.BUFFER_CREATIONFLAG_VERTEX) !== 0;
+                // WRITE bit set (WRITE or READWRITE) → UAV-capable. READ-only params bridges omit it
+                // so D3D11 keeps the buffer CPU-updatable (bgfx m_dynamic=true).
+                const computeWrite = (creationFlags & Constants.BUFFER_CREATIONFLAG_WRITE) !== 0;
 
-        const buffer = new NativeDataBuffer();
-        buffer.references = 1;
-        buffer.capacity = byteLength;
-        buffer.nativeStorageBuffer = this._engine.createStorageBuffer(byteLength, asVertexBuffer);
+                const buffer = new NativeDataBuffer();
+                buffer.references = 1;
+                buffer.capacity = byteLength;
+                buffer.nativeStorageBuffer = this._engine.createStorageBuffer(byteLength, asVertexBuffer, computeWrite);
 
         if (view) {
             this._engine.updateStorageBuffer!(buffer.nativeStorageBuffer, view.buffer, view.byteOffset, view.byteLength, 0);
@@ -4599,14 +4613,32 @@ export class ThinNativeEngine extends ThinEngine {
      */
     public updateStorageBuffer(buffer: DataBuffer, data: DataArray, byteOffset?: number, byteLength?: number): void {
         const nb = buffer as NativeDataBuffer;
-        if (!nb.nativeStorageBuffer || !this._engine.updateStorageBuffer) {
+            if (!nb.nativeStorageBuffer) {
             return;
         }
 
         const view = ArrayBuffer.isView(data) ? data : new Float32Array(data);
         const srcLength = byteLength ?? view.byteLength;
-        this._engine.updateStorageBuffer(nb.nativeStorageBuffer, view.buffer, view.byteOffset, srcLength, byteOffset ?? 0);
-    }
+            const destOffset = byteOffset ?? 0;
+
+            // Prefer deferred command so small SSBO uploads (compute params) interleave with
+            // compute dispatches in the same scene.render scope. Large seed uploads stay
+            // immediate — the command stream's fixed buffer cannot hold multi-MB payloads.
+            if (_native.Engine.COMMAND_UPDATESTORAGEBUFFER && srcLength % 4 === 0 && srcLength <= 4096) {
+                const floats = new Float32Array(view.buffer, view.byteOffset, srcLength / 4);
+                this._commandBufferEncoder.startEncodingCommand(_native.Engine.COMMAND_UPDATESTORAGEBUFFER);
+                this._commandBufferEncoder.encodeCommandArgAsNativeData(nb.nativeStorageBuffer as unknown as NativeData);
+                this._commandBufferEncoder.encodeCommandArgAsUInt32(destOffset);
+                this._commandBufferEncoder.encodeCommandArgAsFloat32s(floats);
+                this._commandBufferEncoder.finishEncodingCommand();
+                return;
+            }
+
+            if (!this._engine.updateStorageBuffer) {
+                return;
+            }
+            this._engine.updateStorageBuffer(nb.nativeStorageBuffer, view.buffer, view.byteOffset, srcLength, destOffset);
+        }
 
     /**
      * Reads bytes from a storage buffer (unsupported on native; returns zeros).
@@ -4746,22 +4778,22 @@ export class ThinNativeEngine extends ThinEngine {
 
             switch (binding.type) {
                 case ComputeBindingType.StorageBuffer:
-                case ComputeBindingType.DataBuffer: {
-                    const dataBuffer = (binding.object.getBuffer ? binding.object.getBuffer() : binding.object) as NativeDataBuffer;
-                    if (dataBuffer?.nativeStorageBuffer) {
-                        buffers.push({ stage, native: dataBuffer.nativeStorageBuffer, access: 2 /* ReadWrite */ });
-                    }
-                    break;
-                }
-                case ComputeBindingType.UniformBuffer: {
-                    const native = this._getComputeUniformBridge(binding.object as UniformBuffer);
-                    if (native) {
-                        // Native D3D path compiles every SSBO as a UAV (force_storage_buffer_as_uav).
-                        // Access Read would bind an SRV and leave the UAV register empty.
-                        buffers.push({ stage, native, access: 2 /* ReadWrite */ });
-                    }
-                    break;
-                }
+                                            case ComputeBindingType.DataBuffer: {
+                                                const dataBuffer = (binding.object.getBuffer ? binding.object.getBuffer() : binding.object) as NativeDataBuffer;
+                                                if (dataBuffer?.nativeStorageBuffer) {
+                                                    // Particle In/Out both ReadWrite (UAV). Cross-frame ping-pong stays UAV↔UAV.
+                                                    buffers.push({ stage, native: dataBuffer.nativeStorageBuffer, access: 2 /* ReadWrite */ });
+                                                }
+                                                break;
+                                            }
+                            case ComputeBindingType.UniformBuffer: {
+                                const native = this._getComputeUniformBridge(binding.object as UniformBuffer);
+                                if (native) {
+                                    // Params are readonly in the CS → SRV; Access::Read.
+                                    buffers.push({ stage, native, access: 0 /* Read */ });
+                                }
+                                break;
+                            }
                 case ComputeBindingType.Texture:
                 case ComputeBindingType.TextureWithoutSampler:
                 case ComputeBindingType.InternalTexture: {
@@ -4810,13 +4842,15 @@ export class ThinNativeEngine extends ThinEngine {
             mirror = new NativeDataBuffer();
             mirror.references = 1;
             mirror.capacity = byteLength;
-            mirror.nativeStorageBuffer = this._engine.createStorageBuffer(byteLength, false);
+            // Params are readonly in CS — create without COMPUTE_WRITE so CPU updates stick.
+            mirror.nativeStorageBuffer = this._engine.createStorageBuffer(byteLength, false, false);
             this._computeUniformBridge.set(uniformBuffer, mirror);
         }
 
-        this._engine.updateStorageBuffer!(mirror.nativeStorageBuffer!, data.buffer, data.byteOffset, byteLength, 0);
-        return mirror.nativeStorageBuffer!;
-    }
+        // Must go through the deferred update path so each prewarm dispatch sees its own params.
+                this.updateStorageBuffer(mirror, data, 0, byteLength);
+                return mirror.nativeStorageBuffer!;
+            }
 
     public override releaseComputeEffects(): void {
         for (const name in this._compiledComputeEffects) {

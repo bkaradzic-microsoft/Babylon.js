@@ -276,10 +276,17 @@ export class Scene implements IAnimatable, IClipPlanesHolder, IAssetContainer {
 
     public set clearColor(value: Color4) {
         if (value !== this._clearColor) {
-            this._clearColor = value;
-            this.onClearColorChangedObservable.notifyObservers(this._clearColor);
+                // Accept Color3 from playgrounds (`new Color3(0.2,0.2,0.2)`): without an
+                // alpha channel Native clears write a=0 and screenshots look black on dark UIs.
+                const anyVal = value as unknown as { r: number; g: number; b: number; a?: number };
+                if (anyVal && (anyVal.a === undefined || anyVal.a === null)) {
+                    this._clearColor = new Color4(anyVal.r, anyVal.g, anyVal.b, 1.0);
+                } else {
+                    this._clearColor = value;
+                }
+                this.onClearColorChangedObservable.notifyObservers(this._clearColor);
+            }
         }
-    }
 
     /**
      * Defines the color used to simulate the ambient color (Default is (0, 0, 0))
