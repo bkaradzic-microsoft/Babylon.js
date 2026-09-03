@@ -2427,16 +2427,11 @@ export class ThinNativeEngine extends ThinEngine {
         compression: Nullable<string> = null,
         level: number = 0
     ): void {
-        // WebGL texImage2D with UNPACK_FLIP_Y_WEBGL=false (HDR default) stores row 0 at the
-        // bottom of each cube face. Native/bgfx D3D+Metal store row 0 at the top, so invertY=false
-        // uploads a vertically flipped HDR cube and OpenPBR IBL metals show sky/ground swapped.
-        // Byte RGBD .env faces are already in Native's origin and must not be flipped (Highlights).
-        if (
-            !invertY &&
-            (type === Constants.TEXTURETYPE_FLOAT || type === Constants.TEXTURETYPE_HALF_FLOAT)
-        ) {
-            invertY = true;
-        }
+        // NativeEngine.updateTextureData honors invertY directly on cubes (no D3D origin
+        // compensation). That matches WebGL: HDRCubeTexture uploads with invertY=false and
+        // UNPACK_FLIP_Y_WEBGL=false. Forcing invertY here double-flipped float/half faces and
+        // made the -Y cubemap a hard brown cap on OpenPBR IBL (513/514). Byte RGBD .env
+        // uploads already pass invertY=true and are unchanged.
         texture.format = format;
         texture.type = type;
         texture.invertY = invertY;
