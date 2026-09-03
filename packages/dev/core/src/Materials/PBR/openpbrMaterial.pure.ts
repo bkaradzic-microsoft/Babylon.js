@@ -3244,7 +3244,12 @@ export class OpenPBRMaterial extends OpenPBRMaterialBase {
                     const radianceTexture = this._getRadianceTexture();
                     if (radianceTexture) {
                         defines.REFRACTED_ENVIRONMENT = MaterialFlags.RefractionTextureEnabled;
-                        defines.REFRACTED_ENVIRONMENT_OPPOSITEZ = this.getScene().useRightHandedSystem ? !radianceTexture.invertZ : radianceTexture.invertZ;
+                        // Native cube sampling inverts world-space Z vs WebGL for refraction dirs
+                        // (reflection still matches). Flip oppositeZ so IBL transmission hits the
+                        // same hemisphere as Babylon.js.
+                        const refractedOppositeZ = this.getScene().useRightHandedSystem ? !radianceTexture.invertZ : radianceTexture.invertZ;
+                        defines.REFRACTED_ENVIRONMENT_OPPOSITEZ =
+                            this.getScene().getEngine().shaderPlatformName === "NATIVE" ? !refractedOppositeZ : refractedOppositeZ;
                         defines.REFRACTED_ENVIRONMENT_LOCAL_CUBE = radianceTexture.isCube && (<any>radianceTexture).boundingBoxSize;
                     } else {
                         defines.REFRACTED_ENVIRONMENT = false;
