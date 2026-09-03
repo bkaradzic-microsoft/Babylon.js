@@ -179,7 +179,19 @@ export class ComputeShaderParticleSystem implements IGPUParticleSystemPlatform {
 
     /** @internal */
     public bindDrawBuffers(index: number, effect: Effect, indexBuffer: Nullable<DataBuffer>): void {
-        this._engine.bindBuffers(this._renderVertexBuffers[index], indexBuffer, effect);
+        // After _update swaps targetIndex, `index` is post-swap.
+        // RVB mapping: createVertexBuffers(buffer0, buffer1) → RVB[0] reads buffer1;
+        //               createVertexBuffers(buffer1, buffer0) → RVB[1] reads buffer0.
+        // updateParticleBuffer(preSwapIndex) writes Out = buffers[preSwapIndex^1].
+        // After swap, postSwapIndex = preSwapIndex^1, so:
+        //   RVB[postSwap]     = lag (this frame's In)
+        //   RVB[postSwap ^ 1] = just-written Out
+        // WebGPU draws lag (RVB[index]). On Native the same-frame UAV→vertex path for the lag
+        // buffer can still be empty/stale after the CS wrote the opposite UAV, so draw the
+        // just-written Out (xor-1) when UBOs are unavailable.
+        // Native: draw just-written Out (xor-1). WebGPU draws lag (index).
+        const drawIndex = this._engine.supportsUniformBuffers ? index : index ^ 1;
+        this._engine.bindBuffers(this._renderVertexBuffers[drawIndex], indexBuffer, effect);
     }
 
     /** @internal */

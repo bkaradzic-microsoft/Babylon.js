@@ -2,7 +2,7 @@ import { Vector3 } from "../../Maths/math.vector";
 import { Clamp } from "../../Maths/math.scalar.functions";
 import { ToLinearSpace } from "../../Maths/math.constants";
 import { Constants } from "../../Engines/constants";
-import type { CubeMapInfo } from "./panoramaToCubemap";
+import { type CubeMapInfo } from "./panoramaToCubemap";
 
 /**
  * Describes how a cube face stored in a CubeMapInfo maps onto world-space axes.
@@ -161,11 +161,12 @@ export class CubeMapToIrradianceMapTools {
             const yy = face.worldAxisForFileY.y;
             const yz = face.worldAxisForFileY.z;
 
-            // `_FileFaces` describes how CubeMapInfo rows are laid out, which is the opposite V order
-            // from what the cube-map upload expects. Walk the output rows from +V down to -V so the
-            // faces line up with the sampler; otherwise every face disagrees with its neighbours and
-            // the lighting shows hard seams across the +Y / -Y boundaries.
-            let v = -outMinUV;
+            // Match the source-face V walk above (v from outMinUV upward). An earlier attempt walked
+            // V top-down to "fix" seams for WebGL upload, but CPU irradiance is only consumed on
+            // engines that cannot GPU-prefilter (Babylon Native / WebGL1), and that inverted V made
+            // every face disagree with its neighbours under bgfx/Native cube sampling — diffuse IBL
+            // then looked like chrome mirrors instead of soft irradiance (tests 118/119 ~34%).
+            let v = outMinUV;
             for (let y = 0; y < outputSize; y++) {
                 let u = outMinUV;
                 for (let x = 0; x < outputSize; x++) {
@@ -203,7 +204,7 @@ export class CubeMapToIrradianceMapTools {
 
                     u += outDu;
                 }
-                v -= outDu;
+                v += outDu;
             }
 
             results.push(output);

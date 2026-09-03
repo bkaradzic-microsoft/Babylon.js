@@ -1454,8 +1454,16 @@ export class GPUParticleSystem extends BaseParticleSystem implements IDisposable
             }
         }
 
-        // Sprite data
-        const spriteData = new Float32Array([0.5, 0.5, 1, 1, -0.5, 0.5, 0, 1, 0.5, -0.5, 1, 0, -0.5, -0.5, 0, 0]);
+        // Sprite data — two triangles (list), not a strip. Native/bgfx instanced triangle
+        // strips have been producing half-quads (one tri missing) even with cull+depth-write
+        // off; a 6-vert triangle list keeps both faces without strip winding alternation.
+        // Layout per vert: offset.xy, uv.xy. Order: tri0 (TR,TL,BR), tri1 (TL,BR,BL).
+        const spriteData = new Float32Array([
+            // tri 0
+            0.5, 0.5, 1, 1, -0.5, 0.5, 0, 1, 0.5, -0.5, 1, 0,
+            // tri 1
+            -0.5, 0.5, 0, 1, 0.5, -0.5, 1, 0, -0.5, -0.5, 0, 0,
+        ]);
 
         const bufferData1: DataArray | DataBuffer = this._platform.createParticleBuffer(data);
         const bufferData2: DataArray | DataBuffer = this._platform.createParticleBuffer(data);
@@ -2172,6 +2180,17 @@ export class GPUParticleSystem extends BaseParticleSystem implements IDisposable
         // Draw order
         this._setEngineBasedOnBlendMode(blendMode);
 
+        // Triangle-strip particle quads alternate winding per triangle; with culling left on
+        // (Native default, and any prior mesh draw) one of the two tris is discarded → half
+        // particles. Match thinParticleSystem which always disables culling before draw.
+        if (this._engine.setState) {
+            this._engine.setState(false);
+        }
+        // Belt-and-suspenders with render(): depth write must stay off for coplanar strip tris.
+        if (!this.forceDepthWrite && this._engine.setDepthWrite) {
+            this._engine.setDepthWrite(false);
+        }
+
         // Bind source VAO
         this._platform.bindDrawBuffers(this._targetIndex, effect, this._scene?.forceWireframe ? this._linesIndexBufferUseInstancing : null);
 
@@ -2183,7 +2202,8 @@ export class GPUParticleSystem extends BaseParticleSystem implements IDisposable
         if (this._scene?.forceWireframe) {
             this._engine.drawElementsType(Constants.MATERIAL_LineStripDrawMode, 0, 10, this._currentActiveCount);
         } else {
-            this._engine.drawArraysType(Constants.MATERIAL_TriangleStripDrawMode, 0, 4, this._currentActiveCount);
+            // 6 verts, triangle list (see spriteData). Avoids instanced triangle-strip half-quads on Native.
+            this._engine.drawArraysType(Constants.MATERIAL_TriangleFillMode, 0, 6, this._currentActiveCount);
         }
         this._engine.setAlphaMode(Constants.ALPHA_DISABLE);
 
@@ -2324,6 +2344,13 @@ export class GPUParticleSystem extends BaseParticleSystem implements IDisposable
 
         if (!this.isReady()) {
             return 0;
+        }
+
+        // Match thinParticleSystem: disable culling before any draw. GPU particles use a
+        // triangle strip whose two tris have opposite winding; with culling left enabled
+        // (Native default / prior mesh draws) one tri is discarded and particles look half-cut.
+        if (!preWarm && !forceUpdateOnly && this._engine.setState) {
+            this._engine.setState(false);
         }
 
         if (!preWarm && this._scene) {
@@ -2488,9 +2515,11 @@ export class GPUParticleSystem extends BaseParticleSystem implements IDisposable
         if (!preWarm && !forceUpdateOnly) {
             engine.setState(false);
 
-            if (this.forceDepthWrite) {
-                engine.setDepthWrite(true);
-            }
+            // Transparent triangle-strip quads are coplanar: with depth write left on from a
+            // prior mesh draw, the first tri writes Z and the second fails DEPTH_LESS → half
+            // particles. Always clear depth write for the particle pass (unless forced).
+            const depthWriteState = engine.getDepthWrite();
+            engine.setDepthWrite(this.forceDepthWrite ? true : false);
 
             if (this.blendMode === ParticleSystem.BLENDMODE_MULTIPLYADD) {
                 outparticles = this._render(ParticleSystem.BLENDMODE_MULTIPLY, emitterWM) + this._render(ParticleSystem.BLENDMODE_ADD, emitterWM);
@@ -2498,6 +2527,7 @@ export class GPUParticleSystem extends BaseParticleSystem implements IDisposable
                 outparticles = this._render(this.blendMode, emitterWM);
             }
 
+            engine.setDepthWrite(depthWriteState);
             this._engine.setAlphaMode(Constants.ALPHA_DISABLE);
         }
 

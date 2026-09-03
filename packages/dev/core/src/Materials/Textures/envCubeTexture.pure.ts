@@ -25,10 +25,11 @@ export abstract class EnvCubeTexture extends BaseTexture {
     private static _FacesMapping = ["right", "left", "up", "down", "front", "back"];
 
     /**
-     * Face size of the CPU-baked irradiance fallback map. Irradiance is very low frequency, so a small
-     * face is plenty and keeps the O(output x input) convolution affordable at load time.
+     * Face size of the CPU-baked irradiance fallback map. Match the GPU prefilter's floor of 32
+     * (see HDRIrradianceFiltering: max(32, 1 << ILog2(width >> 3))) so Native's cosine bake has the
+     * same spatial resolution as WebGL's irradiance cube on typical 64–256 HDR sources.
      */
-    private static _IrradianceMapSize = 16;
+    private static _IrradianceMapSize = 32;
 
     protected _generateHarmonics = true;
     protected _noMipmap: boolean;
