@@ -22,6 +22,7 @@ import { type SubMesh } from "../../../..//Meshes/subMesh.pure";
 import { NodeMaterialBlockConnectionPointTypes } from "../../Enums/nodeMaterialBlockConnectionPointTypes";
 import { ShaderLanguage } from "core/Materials/shaderLanguage";
 import { RegisterClass } from "../../../../Misc/typeStore";
+import { GetEngineReflectionTextureMatrix } from "../../../materialHelper.functions";
 
 /**
  * Base block used to read a reflection texture from a sampler
@@ -286,7 +287,7 @@ export abstract class ReflectionTextureBaseBlock extends NodeMaterialBlock {
             return;
         }
 
-        effect.setMatrix(this._reflectionMatrixName, texture.getReflectionTextureMatrix());
+        effect.setMatrix(this._reflectionMatrixName, GetEngineReflectionTextureMatrix(texture));
 
         if (texture.isCube) {
             effect.setTexture(this._cubeSamplerName, texture);

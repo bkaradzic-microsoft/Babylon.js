@@ -21,6 +21,7 @@ import { type IColor3Like } from "core/Maths/math.like";
 import { MaterialFlags } from "./materialFlags";
 import { type CubeTexture } from "./Textures/cubeTexture";
 import { type Color3 } from "core/Maths/math.color";
+import { Matrix } from "../Maths/math.vector";
 import { ShaderLanguage } from "./shaderLanguage";
 import { type Camera } from "../Cameras/camera";
 
@@ -50,6 +51,26 @@ const TmpMorphInfluencers = {
     UV2: false,
     COLOR: false,
 };
+
+// Native cube sampling is mirrored in X vs WebGL. Fold that into the IBL
+// reflection matrix at bind time. Do not flip cube faces or compiler cube
+// coords — HDR prefilter samples the cube without this matrix.
+const NativeCubeReflectionXScale = Matrix.Scaling(-1, 1, 1);
+const TmpNativeCubeReflectionMatrix = Matrix.Identity();
+
+/**
+ * Reflection matrix used when binding IBL, with Native cube X handedness applied.
+ * @param texture The reflection / environment texture
+ * @returns Matrix to upload as reflectionMatrix
+ */
+export function GetEngineReflectionTextureMatrix(texture: BaseTexture): Matrix {
+    const matrix = texture.getReflectionTextureMatrix();
+    if (texture.isCube && texture.getScene()?.getEngine()?.shaderPlatformName === "NATIVE") {
+        NativeCubeReflectionXScale.multiplyToRef(matrix, TmpNativeCubeReflectionMatrix);
+        return TmpNativeCubeReflectionMatrix;
+    }
+    return matrix;
+}
 
 /**
  * Binds the fog information from the scene to the effect for the given mesh.
@@ -301,7 +322,7 @@ export function BindIBLParameters(
 ): void {
     if (scene.texturesEnabled) {
         if (reflectionTexture && MaterialFlags.ReflectionTextureEnabled) {
-            ubo.updateMatrix("reflectionMatrix", reflectionTexture.getReflectionTextureMatrix());
+            ubo.updateMatrix("reflectionMatrix", GetEngineReflectionTextureMatrix(reflectionTexture));
             ubo.updateFloat2("vReflectionInfos", reflectionTexture.level * scene.iblIntensity, reflectionBlur);
 
             if (supportLocalProjection && (<any>reflectionTexture).boundingBoxSize) {
