@@ -267,22 +267,9 @@ export class FrameGraph implements IDisposable {
 
             await this._whenAsynchronousInitializationDoneAsync();
 
-            // Some engines (Babylon Native) cannot resolve a multisampled depth attachment into a shader-readable
-            // single-sample depth texture, and shared MSAA depth (BGFX_TEXTURE_MSAA_SAMPLE) also produces wrong
-            // depth ordering for Geometry/ObjectRenderer multi-RTT. Clamp BEFORE record so GeometryRendererTask
-            // creates geometry targets with samples=1 and the depth/geometry samples check stays consistent.
-            // Clamping only after record left task.samples=1 from a prior build while NRG rebuild recreated
-            // depth inputs at their original samples=4 (see FrameGraph nrge SSR HillValley rebuild).
-            if (this.engine._features.forceSingleSampleFrameGraphTextures) {
-                for (const task of this._tasks) {
-                    const anyTask = task as { samples?: number };
-                    if (typeof anyTask.samples === "number" && anyTask.samples > 1) {
-                        anyTask.samples = 1;
-                    }
-                }
-                // Input-block textures are created during NodeRenderGraph block build, before this method runs.
-                this.textureManager._forceAllTexturesSingleSample();
-            }
+            // Negotiate before recording so geometry tasks agree with their color/depth attachments.
+            // Imported MSAA resources must retain their physical sample counts.
+            const forceSingleSample = this.textureManager._forceAllTexturesSingleSample();
 
             for (const task of this._tasks) {
                 task._reset();
@@ -290,16 +277,24 @@ export class FrameGraph implements IDisposable {
                 this._currentProcessedTask = task;
                 this.textureManager._isRecordingTask = true;
 
-                task.record();
+                if (forceSingleSample && "samples" in task && typeof task.samples === "number" && task.samples > 1) {
+                    const requestedSamples = task.samples;
+                    task.samples = 1;
+                    try {
+                        task.record();
+                    } finally {
+                        // A later build may import MSAA resources and need the requested value again.
+                        task.samples = requestedSamples;
+                    }
+                } else {
+                    task.record();
+                }
 
                 this.textureManager._isRecordingTask = false;
                 this._currentProcessedTask = null;
             }
 
-            // Belt-and-suspenders: any texture registered during record with samples>1 is clamped before allocate.
-            if (this.engine._features.forceSingleSampleFrameGraphTextures) {
-                this.textureManager._forceAllTexturesSingleSample();
-            }
+            this.textureManager._forceAllTexturesSingleSample();
 
             this.textureManager._allocateTextures(this.optimizeTextureAllocation ? this._tasks : undefined);
             for (const task of this._tasks) {

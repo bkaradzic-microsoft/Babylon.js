@@ -47,6 +47,7 @@ type TextureEntry = {
     lifespan?: TextureLifespan;
     aliasHandle?: FrameGraphTextureHandle; // Handle of the texture this one is aliasing - can be set after execution of texture allocation optimization
     historyTexture?: boolean; // True if the texture is part of a history texture
+    requestedSamples?: number; // Original sample count while the single-sample fallback is active
 };
 
 enum FrameGraphTextureNamespace {
@@ -291,7 +292,9 @@ export class FrameGraphTextureManager {
             },
         };
 
-        return this._createHandleForTexture(name, texture, creationOptions, FrameGraphTextureNamespace.External, handle);
+        const importedHandle = this._createHandleForTexture(name, texture, creationOptions, FrameGraphTextureNamespace.External, handle);
+        this._forceAllTexturesSingleSample();
+        return importedHandle;
     }
 
     /**
@@ -304,13 +307,7 @@ export class FrameGraphTextureManager {
      */
     public createRenderTargetTexture(name: string, creationOptions: FrameGraphTextureCreationOptions, handle?: FrameGraphTextureHandle): FrameGraphTextureHandle {
         const options = FrameGraphTextureManager.CloneTextureOptions(creationOptions.options, undefined, true);
-        // Engines that cannot sample MSAA depth as sampler2D (Babylon Native/bgfx) force all frame-graph
-        // textures to a single sample. Clamp at creation so InputBlock textures registered before
-        // FrameGraph.buildAsync match GeometryRendererTask.samples after the pre-record clamp.
-        if (this.engine._features.forceSingleSampleFrameGraphTextures && (options.samples ?? 1) > 1) {
-            options.samples = 1;
-        }
-        return this._createHandleForTexture(
+        const textureHandle = this._createHandleForTexture(
             name,
             null,
             {
@@ -322,47 +319,44 @@ export class FrameGraphTextureManager {
             this._isRecordingTask ? FrameGraphTextureNamespace.Task : FrameGraphTextureNamespace.Graph,
             handle
         );
+        this._forceAllTexturesSingleSample();
+        return textureHandle;
     }
 
     /**
-     * Forces a not-yet-allocated texture to a single sample.
-     * Used when the engine cannot resolve a multisampled depth attachment into a shader readable depth texture
-     * (see EngineFeatures.forceSingleSampleFrameGraphTextures): the render target that owns such a depth, and the
-     * depth itself, must then be single sampled - a framebuffer requires one sample count across all attachments.
-     * @param handle The handle of the texture to force to a single sample.
+     * Applies the engine's single-sample fallback to graph-owned textures before allocation.
+     * Imported MSAA attachments cannot be reallocated by the graph, so their presence disables the
+     * fallback and restores the requested sample counts of textures registered before the import.
+     * @returns Whether the single-sample fallback is active.
      * @internal
      */
-    public _forceSingleSampleTexture(handle: FrameGraphTextureHandle | undefined): void {
-        if (handle === undefined) {
-            return;
-        }
+    public _forceAllTexturesSingleSample(): boolean {
+        let forceSingleSample = this.engine._features.forceSingleSampleFrameGraphTextures;
+        this._textures.forEach((entry) => {
+            if (entry.namespace === FrameGraphTextureNamespace.External && (entry.texture?.samples ?? 1) > 1) {
+                forceSingleSample = false;
+            }
+        });
 
-        const resolvedHandle = this._textures.get(handle)?.refHandle ?? handle;
-        const entry = this._textures.get(resolvedHandle);
-        if (!entry || !entry.creationOptions || (entry.creationOptions.options.samples ?? 1) <= 1) {
-            return;
-        }
-
-        entry.creationOptions.options.samples = 1;
-        entry.textureDescriptionHash = this._createTextureDescriptionHash(entry.creationOptions);
+        this._textures.forEach((entry) => {
+            if (entry.namespace === FrameGraphTextureNamespace.External || entry.refHandle !== undefined) {
+                return;
+            }
+            const samples = entry.creationOptions.options.samples ?? 1;
+            if (forceSingleSample && samples > 1) {
+                entry.requestedSamples = samples;
+                // MRT entries initially share options; preserve each entry's request and allocation hash.
+                entry.creationOptions.options = { ...entry.creationOptions.options, samples: 1 };
+            } else if (!forceSingleSample && entry.requestedSamples !== undefined) {
+                entry.creationOptions.options.samples = entry.requestedSamples;
+                entry.requestedSamples = undefined;
+            } else {
+                return;
+            }
+            entry.textureDescriptionHash = this._createTextureDescriptionHash(entry.creationOptions);
+        });
+        return forceSingleSample;
     }
-
-        /**
-         * Forces every not-yet-allocated frame-graph texture down to a single sample.
-         * Used by engines that cannot support MSAA depth in the FrameGraph (see
-         * EngineFeatures.forceSingleSampleFrameGraphTextures).
-         * @internal
-         */
-        public _forceAllTexturesSingleSample(): void {
-            this._textures.forEach((entry, handle) => {
-                if (entry.refHandle !== undefined) {
-                    // Dangling / alias handles share creation options with their target; force the target.
-                    this._forceSingleSampleTexture(entry.refHandle);
-                    return;
-                }
-                this._forceSingleSampleTexture(handle);
-            });
-        }
 
     /**
      * Creates a (frame graph) render target wrapper

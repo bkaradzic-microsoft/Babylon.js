@@ -89,6 +89,8 @@ export interface EngineFeatures {
      * frame graph depth texture can be MSAA and still be sampled by a later task (volumetric lighting, SSR...).
      * When this is true the frame graph clamps its render target textures to a single sample, because a
      * multisampled depth texture would read back as zero in every pass that samples it.
+     * Graphs importing multisampled textures retain their requested samples: the graph cannot reallocate
+     * externally owned attachments. Such graphs must not sample unresolved MSAA depth as a regular texture.
      */
     forceSingleSampleFrameGraphTextures: boolean;
 
