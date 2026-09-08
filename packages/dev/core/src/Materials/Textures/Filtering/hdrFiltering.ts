@@ -127,6 +127,11 @@ export class HDRFiltering {
         effect.setTexture("inputTexture", texture);
 
         for (let face = 0; face < 6; face++) {
+            // Cube sampling does not use Native's 2D sampler V flip. Correct the rendered
+            // face orientation here, including the +/-Y faces, rather than reflecting the IBL matrix.
+            if (this._engine._features.needToInvertCubeMapRendering) {
+                directions[face][1].negateInPlace();
+            }
             effect.setVector3("up", directions[face][0]);
             effect.setVector3("right", directions[face][1]);
             effect.setVector3("front", directions[face][2]);

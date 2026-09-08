@@ -22,7 +22,6 @@ import { BindClipPlane, PrepareStringDefinesForClipPlanes, AddClipPlaneUniforms 
 import {
     BindMorphTargetParameters,
     BindSceneUniformBuffer,
-    GetEngineReflectionTextureMatrix,
     PrepareDefinesAndAttributesForMorphTargets,
     PushAttributesForInstances,
     PrepareDefinesForIBL,
@@ -1446,7 +1445,7 @@ export class GeometryBufferRenderer {
                     }
 
                     // Bind reflection matrix
-                    effect.setMatrix("reflectionMatrix", GetEngineReflectionTextureMatrix(reflectionTexture));
+                    effect.setMatrix("reflectionMatrix", reflectionTexture.getReflectionTextureMatrix());
 
                     // Bind reflection info (intensity and other parameters)
                     effect.setFloat2("vReflectionInfos", reflectionTexture.level * scene.iblIntensity, 0.0);

@@ -88,6 +88,7 @@ export class ReflectionProbe {
         this._renderTargetTexture.invertZ = scene.useRightHandedSystem;
 
         const useReverseDepthBuffer = scene.getEngine().useReverseDepthBuffer;
+        const cubeProjectionScale = scene.getEngine()._features.needToInvertCubeMapRendering ? Matrix.Scaling(1, -1, 1) : null;
 
         this._renderTargetTexture.onBeforeRenderObservable.add((faceIndex: number) => {
             if (this._sceneUBOs) {
@@ -134,6 +135,9 @@ export class ReflectionProbe {
                     useReverseDepthBuffer ? scene.activeCamera.minZ : scene.activeCamera.maxZ,
                     this._scene.getEngine().isNDCHalfZRange
                 );
+                if (cubeProjectionScale) {
+                    this._projectionMatrix.multiplyToRef(cubeProjectionScale, this._projectionMatrix);
+                }
                 scene.setTransformMatrix(this._viewMatrix, this._projectionMatrix);
                 if (scene.activeCamera.isRigCamera && !this._renderTargetTexture.activeCamera) {
                     this._renderTargetTexture.activeCamera = scene.activeCamera.rigParent || null;
@@ -146,9 +150,15 @@ export class ReflectionProbe {
         });
 
         let currentApplyByPostProcess: boolean;
+        let currentReverseCulling: boolean;
 
         this._renderTargetTexture.onBeforeBindObservable.add(() => {
             const engine = scene.getEngine();
+            currentReverseCulling = engine._reverseCulling;
+            if (cubeProjectionScale) {
+                // A reflected projection reverses winding, independently of each material's cull-face choice.
+                engine._reverseCulling = !currentReverseCulling;
+            }
             this._currentSceneUBO = scene.getSceneUniformBuffer();
             if (engine._enableGPUDebugMarkers) {
                 engine._debugPushGroup?.(`reflection probe generation for ${name}`);
@@ -161,6 +171,7 @@ export class ReflectionProbe {
 
         this._renderTargetTexture.onAfterUnbindObservable.add(() => {
             const engine = scene.getEngine();
+            engine._reverseCulling = currentReverseCulling;
             scene.imageProcessingConfiguration.applyByPostProcess = currentApplyByPostProcess;
             scene._forcedViewPosition = null;
             if (this._sceneUBOs) {

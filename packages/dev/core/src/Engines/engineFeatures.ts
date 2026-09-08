@@ -19,6 +19,9 @@ export interface EngineFeatures {
     /** Indicates that prefiltered mipmaps can be generated in some processes (for eg when loading an HDR cube texture) */
     allowTexturePrefiltering: boolean;
 
+    /** Indicates that cube rendering must invert face V for a top-left render-target origin. */
+    needToInvertCubeMapRendering?: boolean;
+
     /** Indicates that a GPU-convolved irradiance TEXTURE can be generated for diffuse IBL. When false (eg Babylon
      * Native, WebGL1) diffuse IBL falls back to CPU spherical harmonics even if allowTexturePrefiltering is true. */
     allowIrradianceTexturePrefiltering: boolean;

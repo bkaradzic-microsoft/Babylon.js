@@ -124,6 +124,9 @@ export class HDRIrradianceFiltering {
         }
 
         for (let face = 0; face < 6; face++) {
+            if (this._engine._features.needToInvertCubeMapRendering) {
+                directions[face][1].negateInPlace();
+            }
             effect.setVector3("up", directions[face][0]);
             effect.setVector3("right", directions[face][1]);
             effect.setVector3("front", directions[face][2]);

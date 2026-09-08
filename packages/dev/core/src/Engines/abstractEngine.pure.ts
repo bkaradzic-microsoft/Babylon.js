@@ -2472,6 +2472,9 @@ export abstract class AbstractEngine {
      */
     public cullBackFaces: Nullable<boolean> = null;
 
+    /** @internal Reverses winding for projection-inverted Native cube render passes. */
+    public _reverseCulling = false;
+
     /**
      * Gets the current render width
      * @param useScreen defines if screen size must be used (or the current render target if any)

@@ -393,6 +393,7 @@ export class ThinNativeEngine extends ThinEngine {
     private _zOffsetUnits: number;
     private _cachedCulling: boolean;
     private _cachedReverseSide: boolean;
+    private _cachedReverseCulling = false;
     private _cachedCullBackFaces: boolean;
     private _cachedZOffset: number;
     private _cachedZOffsetUnits: number;
@@ -582,6 +583,7 @@ export class ThinNativeEngine extends ThinEngine {
             // environment per-roughness. Required so OpenPBR/PBR IBL scenes get real prefiltered radiance
             // (and irradiance) instead of black/energy-lossy CPU-SH fallbacks.
             allowTexturePrefiltering: true,
+            needToInvertCubeMapRendering: _native.Engine.CAPS_ORIGIN_BOTTOM_LEFT === false,
             // The GPU radiance prefilter (specular IBL) works on Native, but the GPU irradiance-texture
             // convolution does not match the reference on high-contrast environments: on room.hdr it is
             // within 1-2%, while on harties_cliff_view_4k.hdr it renders at 0.651/0.691/0.725 of the
@@ -1274,13 +1276,14 @@ export class ThinNativeEngine extends ThinEngine {
 
     public override setStateCullFaceType(cullBackFaces?: boolean, force?: boolean): void {
         const cullBack = this.cullBackFaces ?? cullBackFaces ?? true;
-        if (this._cachedCullBackFaces === cullBack && !force) {
+        if (this._cachedCullBackFaces === cullBack && this._cachedReverseCulling === this._reverseCulling && !force) {
             return;
         }
         this._cachedCullBackFaces = cullBack;
+        this._cachedReverseCulling = this._reverseCulling;
 
         // Native uses an immediate command-buffer state model (no lazy _depthCullingState), so
-        // re-issue the last COMMAND_SETSTATE payload with only the cull face changed. The zOffset
+        // re-issue the last COMMAND_SETSTATE payload with updated cull face and pass winding. The zOffset
         // values are the ones that command actually encoded rather than the live _zOffset fields,
         // which setZOffset()/setZOffsetUnits() can update independently (and encode with the
         // opposite sign under a reverse depth buffer).
@@ -1289,7 +1292,7 @@ export class ThinNativeEngine extends ThinEngine {
         this._commandBufferEncoder.encodeCommandArgAsFloat32(this._cachedZOffset);
         this._commandBufferEncoder.encodeCommandArgAsFloat32(this._cachedZOffsetUnits);
         this._commandBufferEncoder.encodeCommandArgAsUInt32(cullBack ? 1 : 0);
-        this._commandBufferEncoder.encodeCommandArgAsUInt32(this._cachedReverseSide ? 1 : 0);
+        this._commandBufferEncoder.encodeCommandArgAsUInt32(this._cachedReverseSide !== this._reverseCulling ? 1 : 0);
         this._commandBufferEncoder.finishEncodingCommand();
     }
 
@@ -1313,12 +1316,13 @@ export class ThinNativeEngine extends ThinEngine {
         this._commandBufferEncoder.encodeCommandArgAsFloat32(zOffset);
         this._commandBufferEncoder.encodeCommandArgAsFloat32(zOffsetUnits);
         this._commandBufferEncoder.encodeCommandArgAsUInt32((this.cullBackFaces ?? cullBackFaces ?? true) ? 1 : 0);
-        this._commandBufferEncoder.encodeCommandArgAsUInt32(reverseSide ? 1 : 0);
+        this._commandBufferEncoder.encodeCommandArgAsUInt32(reverseSide !== this._reverseCulling ? 1 : 0);
         this._commandBufferEncoder.finishEncodingCommand();
 
         // Cache the resolved state so setStateCullFaceType() can re-issue it with a new cull face.
         this._cachedCulling = culling;
         this._cachedReverseSide = reverseSide;
+        this._cachedReverseCulling = this._reverseCulling;
         this._cachedCullBackFaces = this.cullBackFaces ?? cullBackFaces ?? true;
         this._cachedZOffset = zOffset;
         this._cachedZOffsetUnits = zOffsetUnits;
