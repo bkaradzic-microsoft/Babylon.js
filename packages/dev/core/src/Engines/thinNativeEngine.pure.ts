@@ -856,7 +856,7 @@ export class ThinNativeEngine extends ThinEngine {
         }
 
         this._commandBufferEncoder.startEncodingCommand(_native.Engine.COMMAND_CLEAR);
-        this._commandBufferEncoder.encodeCommandArgAsUInt32(backBuffer && color ? 1 : 0);
+        this._commandBufferEncoder.encodeCommandArgAsUInt32(backBuffer && color && this._clearAttachmentMask !== 0 ? 1 : 0);
         this._commandBufferEncoder.encodeCommandArgAsFloat32(color ? color.r : 0);
         this._commandBufferEncoder.encodeCommandArgAsFloat32(color ? color.g : 0);
         this._commandBufferEncoder.encodeCommandArgAsFloat32(color ? color.b : 0);
@@ -3921,12 +3921,12 @@ export class ThinNativeEngine extends ThinEngine {
             }
         }
 
-        this._clearAttachmentMask = mask === 0 ? _AllAttachmentsMask : mask;
+        // An empty layout disables color clears; it must not clear every attachment instead.
+        this._clearAttachmentMask = mask;
     }
 
     public override buildTextureLayout(textureStatus: boolean[], _backBufferLayout = false): number[] {
-        // Native has no gl draw-buffer enums; return a per-attachment index list (consumers only use the
-        // length/order, and bindAttachments is a no-op).
+        // Native layouts use attachment indices instead of WebGL draw-buffer enums.
         const result: number[] = [];
         for (let i = 0; i < textureStatus.length; i++) {
             result.push(textureStatus[i] ? i : -1);
