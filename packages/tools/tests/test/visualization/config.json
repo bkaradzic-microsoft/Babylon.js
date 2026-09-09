@@ -5238,7 +5238,6 @@
             "playgroundId": "#MRQTX7#0",
             "referenceImage": "gpu-particles-emitters-hemisphere.png",
             "excludedEngines": ["webgl1"],
-            "errorRatio": 4,
             "dependsOn": ["LibMaterials", "Particles"]
         },
         {
