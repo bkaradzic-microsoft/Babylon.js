@@ -1386,7 +1386,8 @@ export class ShadowGenerator implements IShadowGenerator {
             sideOrientation =
                 sideOrientation === Constants.MATERIAL_ClockWiseSideOrientation ? Constants.MATERIAL_CounterClockWiseSideOrientation : Constants.MATERIAL_ClockWiseSideOrientation;
         }
-        const reverseSideOrientation = sideOrientation === Constants.MATERIAL_ClockWiseSideOrientation;
+        const invertCubeRendering = this._light.needCube() && !!engine._features.needToInvertCubeMapRendering;
+        const reverseSideOrientation = (sideOrientation === Constants.MATERIAL_ClockWiseSideOrientation) !== invertCubeRendering;
 
         engine.setState(material.backFaceCulling, undefined, undefined, reverseSideOrientation, material.cullBackFaces);
 
@@ -1485,7 +1486,7 @@ export class ShadowGenerator implements IShadowGenerator {
             }
 
             if (this.forceBackFacesOnly) {
-                engine.setState(true, 0, false, true, material.cullBackFaces);
+                engine.setState(true, 0, false, !invertCubeRendering, material.cullBackFaces);
             }
 
             // Observables
@@ -1504,7 +1505,7 @@ export class ShadowGenerator implements IShadowGenerator {
             });
 
             if (this.forceBackFacesOnly) {
-                engine.setState(true, 0, false, false, material.cullBackFaces);
+                engine.setState(true, 0, false, invertCubeRendering, material.cullBackFaces);
             }
 
             // Observables
@@ -2062,6 +2063,11 @@ export class ShadowGenerator implements IShadowGenerator {
 
                 if (renderList) {
                     this._light.setShadowProjectionMatrix(this._projectionMatrix, this._viewMatrix, renderList);
+                    if (this._light.needCube() && scene.getEngine()._features.needToInvertCubeMapRendering) {
+                        // Cube samplers do not apply the 2D sampler's framebuffer-origin correction.
+                        Matrix.ScalingToRef(1, -1, 1, TmpVectors.Matrix[0]);
+                        this._projectionMatrix.multiplyToRef(TmpVectors.Matrix[0], this._projectionMatrix);
+                    }
                 }
             }
 
