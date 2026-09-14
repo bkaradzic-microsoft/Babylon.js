@@ -5714,6 +5714,8 @@ export class Scene implements IAnimatable, IClipPlanesHolder, IAssetContainer {
             }
         }
 
+        this._inputManager._updateMeshUnderPointer();
+
         // Intersection checks
         this._checkIntersections();
 
