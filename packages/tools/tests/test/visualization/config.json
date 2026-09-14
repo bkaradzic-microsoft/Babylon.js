@@ -4609,6 +4609,7 @@
         {
             "title": "Havok FloatingOrigin Multi-Region",
             "playgroundId": "#ND10JJ#0",
+            "replace": "i < 180,i < 179",
             "useLargeWorldRendering": true,
             "dependsOn": ["Cameras", "GUI", "PBR", "Physics", "Textures"]
         },
