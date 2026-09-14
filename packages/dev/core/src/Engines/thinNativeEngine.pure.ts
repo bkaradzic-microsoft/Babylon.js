@@ -613,6 +613,9 @@ export class ThinNativeEngine extends ThinEngine {
             needShaderCodeInlining: true,
             needToAlwaysBindUniformBuffers: false,
             supportRenderPasses: true,
+            // Native edge shaders become ready through their first render attempt. Waiting for them at the
+            // ObjectRenderer level delays the entire FrameGraph pass and changes established first-frame output.
+            checkEdgesRendererIsReady: false,
             supportSpriteInstancing: true,
             forceVertexBufferStrideAndOffsetMultiple4Bytes: true,
             // bgfx cannot resolve a multisampled depth attachment into a single-sample texture (D3D11's

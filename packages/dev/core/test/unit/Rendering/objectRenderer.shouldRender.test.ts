@@ -188,4 +188,22 @@ describe("ObjectRenderer.shouldRender", () => {
 
         renderer.dispose();
     });
+
+    it("should allow an engine to skip edge readiness checks", () => {
+        new ArcRotateCamera("camera", 0, 0, 10, Vector3.Zero(), scene);
+        const mesh = MeshBuilder.CreateBox("box", undefined, scene);
+        mesh.enableEdgesRendering();
+
+        vi.spyOn(mesh, "isReady").mockReturnValue(true);
+        const edgesReady = vi.spyOn(mesh.edgesRenderer!, "isReady").mockReturnValue(false);
+        engine._features.checkEdgesRendererIsReady = false;
+
+        const renderer = new ObjectRenderer("test", scene);
+        renderer.renderList = [mesh];
+
+        expect(renderer.isReadyForRendering(256, 256)).toBe(true);
+        expect(edgesReady).not.toHaveBeenCalled();
+
+        renderer.dispose();
+    });
 });
