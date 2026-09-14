@@ -589,7 +589,7 @@ export class VertexData implements IVertexDataLike {
         return this;
     }
 
-    @nativeOverride.filter((...args: Parameters<typeof VertexData._TransformVector3Coordinates>) => !Array.isArray(args[0]))
+    @nativeOverride.filter((...args: Parameters<typeof VertexData._TransformVector3Coordinates>) => !Array.isArray(args[0]) && args[1].m instanceof Float32Array)
     private static _TransformVector3Coordinates(coordinates: FloatArray, transformation: DeepImmutable<Matrix>, offset = 0, length = coordinates.length) {
         const coordinate = TmpVectors.Vector3[0];
         const transformedCoordinate = TmpVectors.Vector3[1];
@@ -602,7 +602,7 @@ export class VertexData implements IVertexDataLike {
         }
     }
 
-    @nativeOverride.filter((...args: Parameters<typeof VertexData._TransformVector3Normals>) => !Array.isArray(args[0]))
+    @nativeOverride.filter((...args: Parameters<typeof VertexData._TransformVector3Normals>) => !Array.isArray(args[0]) && args[1].m instanceof Float32Array)
     private static _TransformVector3Normals(normals: FloatArray, transformation: DeepImmutable<Matrix>, offset = 0, length = normals.length) {
         const normal = TmpVectors.Vector3[0];
         const transformedNormal = TmpVectors.Vector3[1];
@@ -615,7 +615,7 @@ export class VertexData implements IVertexDataLike {
         }
     }
 
-    @nativeOverride.filter((...args: Parameters<typeof VertexData._TransformVector4Normals>) => !Array.isArray(args[0]))
+    @nativeOverride.filter((...args: Parameters<typeof VertexData._TransformVector4Normals>) => !Array.isArray(args[0]) && args[1].m instanceof Float32Array)
     private static _TransformVector4Normals(normals: FloatArray, transformation: DeepImmutable<Matrix>, offset = 0, length = normals.length) {
         const normal = TmpVectors.Vector4[0];
         const transformedNormal = TmpVectors.Vector4[1];

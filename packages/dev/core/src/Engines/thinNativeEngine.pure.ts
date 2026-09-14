@@ -26,7 +26,7 @@ import { type IMultiRenderTargetOptions } from "../Materials/Textures/multiRende
 import { type IColor3Like, type IColor4Like, type IViewportLike } from "../Maths/math.like";
 import { Logger } from "../Misc/logger";
 import { Constants } from "./constants";
-import { AbstractEngine, type ISceneLike } from "./abstractEngine.pure";
+import { AbstractEngine, type AbstractEngineOptions, type ISceneLike } from "./abstractEngine.pure";
 import { ThinEngine } from "./thinEngine.pure";
 import { type IWebRequest } from "../Misc/interfaces/iWebRequest";
 import { EngineStore } from "./engineStore";
@@ -164,7 +164,7 @@ class NativeComputePipelineContext implements IComputePipelineContext {
 /**
  * Options to create the Native engine
  */
-export interface ThinNativeEngineOptions {
+export interface ThinNativeEngineOptions extends AbstractEngineOptions {
     /**
      * defines whether to adapt to the device's viewport characteristics (default: false)
      */
@@ -426,7 +426,7 @@ export class ThinNativeEngine extends ThinEngine {
     private _frameGraphDepthWrappers: Map<number, NativeRenderTargetWrapper[]>;
 
     public constructor(options: ThinNativeEngineOptions = {}) {
-        super(null, false, undefined, options.adaptToDeviceRatio);
+        super(null, false, options, options.adaptToDeviceRatio);
         this._initializeNativeEngine(options.adaptToDeviceRatio ?? false);
     }
     //////////////////////////////////////////////////////////////////////
