@@ -121,6 +121,7 @@ export class FrameGraph implements IDisposable {
             }
         })();
         this.textureManager = new FrameGraphTextureManager(this._engine, debugTextures, scene);
+        this.textureManager._forceSingleSampleOverride = false;
         this._passContext = new FrameGraphContext(this._engine, this.textureManager, scene);
         this._renderContext = new FrameGraphRenderContext(this._engine, this.textureManager, scene);
 
@@ -258,6 +259,7 @@ export class FrameGraph implements IDisposable {
      * @param waitForReadiness If true, the method will wait for the frame graph to be ready before returning (default is true)
      */
     public async buildAsync(waitForReadiness = true): Promise<void> {
+        this.textureManager._forceSingleSampleOverride = false;
         this.textureManager._releaseTextures(false);
 
         this.pausedExecution = true;
@@ -267,31 +269,17 @@ export class FrameGraph implements IDisposable {
 
             await this._whenAsynchronousInitializationDoneAsync();
 
-            // Negotiate before recording so geometry tasks agree with their color/depth attachments.
-            // Imported MSAA resources must retain their physical sample counts.
-            const forceSingleSample = this.textureManager._forceAllTexturesSingleSample();
+            this.textureManager._forceAllTexturesSingleSample();
+            this._recordTasks(false);
 
-            for (const task of this._tasks) {
-                task._reset();
-
-                this._currentProcessedTask = task;
-                this.textureManager._isRecordingTask = true;
-
-                if (forceSingleSample && "samples" in task && typeof task.samples === "number" && task.samples > 1) {
-                    const requestedSamples = task.samples;
-                    task.samples = 1;
-                    try {
-                        task.record();
-                    } finally {
-                        // A later build may import MSAA resources and need the requested value again.
-                        task.samples = requestedSamples;
-                    }
-                } else {
-                    task.record();
+            // Depth attachments alone need no resolve. Only shader-readable depth dependencies
+            // require the fallback, which must also be reflected in task-owned attachments.
+            if (this._engine._features.forceSingleSampleFrameGraphTextures && this.textureManager._hasDepthTextureDependencies(this._tasks)) {
+                this.textureManager._forceSingleSampleOverride = undefined;
+                if (this.textureManager._forceAllTexturesSingleSample()) {
+                    this.textureManager._releaseTextures(false);
+                    this._recordTasks(true);
                 }
-
-                this.textureManager._isRecordingTask = false;
-                this._currentProcessedTask = null;
             }
 
             this.textureManager._forceAllTexturesSingleSample();
@@ -321,6 +309,29 @@ export class FrameGraph implements IDisposable {
             throw e;
         } finally {
             this.pausedExecution = false;
+        }
+    }
+
+    private _recordTasks(forceSingleSample: boolean): void {
+        for (const task of this._tasks) {
+            task._reset();
+            this._currentProcessedTask = task;
+            this.textureManager._isRecordingTask = true;
+
+            if (forceSingleSample && "samples" in task && typeof task.samples === "number" && task.samples > 1) {
+                const requestedSamples = task.samples;
+                task.samples = 1;
+                try {
+                    task.record();
+                } finally {
+                    task.samples = requestedSamples;
+                }
+            } else {
+                task.record();
+            }
+
+            this.textureManager._isRecordingTask = false;
+            this._currentProcessedTask = null;
         }
     }
 

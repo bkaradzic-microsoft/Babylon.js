@@ -71,6 +71,9 @@ export class FrameGraphTextureManager {
     /** @internal */
     public _isRecordingTask = false;
 
+    /** @internal */
+    public _forceSingleSampleOverride?: boolean;
+
     /**
      * Gets or sets a boolean indicating if debug logs should be shown when applying texture allocation optimization (default: false)
      */
@@ -331,7 +334,7 @@ export class FrameGraphTextureManager {
      * @internal
      */
     public _forceAllTexturesSingleSample(): boolean {
-        let forceSingleSample = this.engine._features.forceSingleSampleFrameGraphTextures;
+        let forceSingleSample = this._forceSingleSampleOverride ?? this.engine._features.forceSingleSampleFrameGraphTextures;
         this._textures.forEach((entry) => {
             if (entry.namespace === FrameGraphTextureNamespace.External && (entry.texture?.samples ?? 1) > 1) {
                 forceSingleSample = false;
@@ -356,6 +359,26 @@ export class FrameGraphTextureManager {
             entry.textureDescriptionHash = this._createTextureDescriptionHash(entry.creationOptions);
         });
         return forceSingleSample;
+    }
+
+    /** @internal */
+    public _hasDepthTextureDependencies(tasks: readonly FrameGraphTask[]): boolean {
+        const dependencies = new Set<FrameGraphTextureHandle>();
+        for (const task of tasks) {
+            task.dependencies?.forEach((handle) => dependencies.add(handle));
+            for (const pass of [...task.passes, ...task.passesDisabled]) {
+                if (FrameGraphRenderPass.IsRenderPass(pass)) {
+                    pass.collectDependencies(dependencies, false);
+                }
+            }
+        }
+        for (const handle of dependencies) {
+            const options = this.getTextureCreationOptions(handle).options;
+            if (IsDepthTexture(options.formats?.[0] ?? Constants.TEXTUREFORMAT_RGBA)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

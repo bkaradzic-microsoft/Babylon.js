@@ -116,11 +116,16 @@ export class FrameGraphRenderPass extends FrameGraphPass<FrameGraphRenderContext
     /**
      * Collects the dependencies of the render pass.
      * @param dependencies The set of dependencies to update.
+     * @param includeRenderTargets Whether to include color and depth attachments (default: true).
      */
-    public collectDependencies(dependencies: Set<FrameGraphTextureHandle>): void {
+    public collectDependencies(dependencies: Set<FrameGraphTextureHandle>, includeRenderTargets = true): void {
         const iterator = this._dependencies.keys();
         for (let key = iterator.next(); key.done !== true; key = iterator.next()) {
             dependencies.add(key.value);
+        }
+
+        if (!includeRenderTargets) {
+            return;
         }
 
         if (this._renderTarget !== undefined) {

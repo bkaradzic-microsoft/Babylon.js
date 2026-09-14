@@ -619,8 +619,8 @@ export class ThinNativeEngine extends ThinEngine {
             // ResolveSubresource rejects depth formats), so an MSAA depth render target has to be flagged
             // BGFX_TEXTURE_MSAA_SAMPLE and is exposed to shaders as a Texture2DMS. Babylon's frame graph shaders
             // declare their depth input as a plain sampler2D, so such a texture reads back as zero everywhere
-            // (e.g. volumetric lighting produced no in-scattering at all). Clamp frame graph render targets to a
-            // single sample so the depth texture stays shader readable.
+            // (e.g. volumetric lighting produced no in-scattering at all). Keep depth-sampling graphs single
+            // sample, while graphs that only use depth attachments retain their requested MSAA.
             forceSingleSampleFrameGraphTextures: true,
             _checkNonFloatVertexBuffersDontRecreatePipelineContext: false,
         };
