@@ -77,9 +77,6 @@ export interface EngineFeatures {
     /**  Indicates that the engine supports render passes */
     supportRenderPasses: boolean;
 
-    /** Indicates whether ObjectRenderer readiness checks should wait for enabled edge renderers. Defaults to true. */
-    checkEdgesRendererIsReady?: boolean;
-
     /**  Indicates that the engine supports sprite instancing */
     supportSpriteInstancing: boolean;
 
