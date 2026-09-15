@@ -584,15 +584,9 @@ export class ThinNativeEngine extends ThinEngine {
             // (and irradiance) instead of black/energy-lossy CPU-SH fallbacks.
             allowTexturePrefiltering: true,
             needToInvertCubeMapRendering: _native.Engine.CAPS_ORIGIN_BOTTOM_LEFT === false,
-            // The GPU radiance prefilter (specular IBL) works on Native, but the GPU irradiance-texture
-            // convolution does not match the reference on high-contrast environments: on room.hdr it is
-            // within 1-2%, while on harties_cliff_view_4k.hdr it renders at 0.651/0.691/0.725 of the
-            // reference. The loss is colour-dependent (red loses most) and unchanged by forcing input
-            // mip 0, so it is the bright warm sun peak being dropped somewhere in the bgfx float-cube
-            // sample path, not the mip-LOD formula and not a flat energy scale. Diffuse IBL therefore
-            // uses the deterministic CPU cosine convolution in CubeMapToIrradianceMapTools instead
-            // (see envCubeTexture, which bakes a real irradiance cube when this flag is false).
-            allowIrradianceTexturePrefiltering: false,
+            // Explicit CDF texel bins preserve nearest-sampling ties across Native's texture-origin
+            // transform, enabling GPU irradiance filtering and its dominant-light direction.
+            allowIrradianceTexturePrefiltering: true,
             trackUbosInFrame: false,
             checkUbosContentBeforeUpload: false,
             // 2D-array render targets + the SPIRV-Cross narrow-varying-array HLSL fix (see

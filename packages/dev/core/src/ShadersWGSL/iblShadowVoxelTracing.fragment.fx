@@ -1,5 +1,6 @@
 varying vUV: vec2f;
 #include<helperFunctions>
+#include<iblCdfFunctions>
 #define DISABLE_UNIFORMITY_ANALYSIS
 
 var depthSampler: texture_2d<f32>;
@@ -469,8 +470,8 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
     {
       var r: vec2f = plasticSequence(frameId * nbDirs + i);
       r = fract(r +  vec2f(2.0) * abs(noise.xy -  vec2f(0.5)));
-      T.x = textureSampleLevel(icdfSampler, icdfSamplerSampler, vec2f(r.x, 0.0), 0.0).x;
-      T.y = textureSampleLevel(icdfSampler, icdfSamplerSampler, vec2f(T.x, r.y), 0.0).y;
+      T.x = sampleIcdf(icdfSampler, vec2f(r.x, 0.0)).x;
+      T.y = sampleIcdf(icdfSampler, vec2f(T.x, r.y)).y;
       L =  vec4f(uv_to_normal(vec2f(T.x - normalizedRotation, T.y)), 0);
 #ifndef RIGHT_HANDED
       L.z *= -1.0;
@@ -479,7 +480,7 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
     #ifdef COLOR_SHADOWS
       var lightDir: vec3f = uv_to_normal(vec2f(1.0 - fract(T.x + 0.25), T.y));
       var ibl: vec3f = textureSampleLevel(iblSampler, iblSamplerSampler, lightDir, 0.0).xyz;
-      var pdf: f32 = textureSampleLevel(icdfSampler, icdfSamplerSampler, T, 0.0).z;
+      var pdf: f32 = sampleIcdf(icdfSampler, T).z;
     #endif
     var cosNL: f32 = dot(N, L.xyz);
     var opacity: f32 = 0.0;

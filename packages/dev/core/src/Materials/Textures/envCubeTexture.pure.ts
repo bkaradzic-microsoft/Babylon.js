@@ -26,7 +26,7 @@ export abstract class EnvCubeTexture extends BaseTexture {
 
     /**
      * Face size of the CPU-baked irradiance fallback map. Match the GPU prefilter's floor of 32
-     * (see HDRIrradianceFiltering: max(32, 1 << ILog2(width >> 3))) so Native's cosine bake has the
+     * (see HDRIrradianceFiltering: max(32, 1 << ILog2(width >> 3))) so the fallback cosine bake has the
      * same spatial resolution as WebGL's irradiance cube on typical 64–256 HDR sources.
      */
     private static _IrradianceMapSize = 32;
@@ -233,7 +233,7 @@ export abstract class EnvCubeTexture extends BaseTexture {
             const data = await this._getCubeMapTextureDataAsync(buffer, this._size, this._supersample);
 
             // Generate harmonics if needed. When irradiance prefiltering was requested but the engine cannot
-            // produce a GPU irradiance texture (e.g. Babylon Native or WebGL1 — even if it CAN prefilter the
+            // produce a GPU irradiance texture (e.g. WebGL1 — even if it CAN prefilter the
             // radiance cube), fall back to CPU-computed spherical harmonics so diffuse IBL still has a source;
             // without this the reflection texture keeps an empty spherical polynomial and diffuse renders black.
             const prefilterUnavailable = (this._prefilterOnLoad || this._prefilterIrradianceOnLoad) && !engine._features.allowIrradianceTexturePrefiltering;

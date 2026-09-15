@@ -17,8 +17,8 @@ void main(void) {
     {
         vec2 Xi = hammersley(i, NUM_SAMPLES);
         vec2 T;
-        T.x = texture2D(icdfSampler, vec2(Xi.x, 0.0)).x;
-        T.y = texture2D(icdfSampler, vec2(T.x, Xi.y)).y;
+        T.x = sampleIcdf(icdfSampler, vec2(Xi.x, 0.0)).x;
+        T.y = sampleIcdf(icdfSampler, vec2(T.x, Xi.y)).y;
         vec3 Ls = uv_to_normal(vec2(1.0 - fract(T.x + 0.25), T.y));
         lightDir += Ls;
     }

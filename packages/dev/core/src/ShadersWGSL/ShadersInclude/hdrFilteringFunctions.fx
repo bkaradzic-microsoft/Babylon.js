@@ -1,5 +1,6 @@
 #ifdef NUM_SAMPLES
     #if NUM_SAMPLES > 0
+    #include<iblCdfFunctions>
 
     // https://learnopengl.com/PBR/IBL/Specular-IBL
     // Hammersley
@@ -194,8 +195,8 @@
 
                 #ifdef IBL_CDF_FILTERING
                     var T: vec2f;
-                    T.x = textureSampleLevel(icdfSampler, icdfSamplerSampler, vec2(Xi.x, 0.0), 0.0).x;
-                    T.y = textureSampleLevel(icdfSampler, icdfSamplerSampler, vec2(T.x, Xi.y), 0.0).y;
+                    T.x = sampleIcdf(icdfSampler, vec2(Xi.x, 0.0)).x;
+                    T.y = sampleIcdf(icdfSampler, vec2(T.x, Xi.y)).y;
                     var Ls: vec3f = uv_to_normal(vec2f(1.0 - fract(T.x + 0.25), T.y));
                     var NoL: f32 = dot(n, Ls);
                     var NoV: f32 = dot(n, inputV);
@@ -223,7 +224,7 @@
                 if (NoL > 0.) {
                     
                     #ifdef IBL_CDF_FILTERING
-                        var pdf: f32 = textureSampleLevel(icdfSampler, icdfSamplerSampler, T, 0.0).z;
+                        var pdf: f32 = sampleIcdf(icdfSampler, T).z;
                         var c: vec3f = textureSampleLevel(inputTexture, inputSampler, Ls, 0.0).rgb;
                     #else
                         var pdf_inversed: f32 = PI / NoL;

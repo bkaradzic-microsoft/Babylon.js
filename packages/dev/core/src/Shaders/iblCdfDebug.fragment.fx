@@ -1,4 +1,5 @@
 precision highp samplerCube;
+#include<iblCdfFunctions>
 #define PI 3.1415927
 varying vec2 vUV;
 
@@ -55,18 +56,18 @@ void main(void) {
                                             vec2(1.0, 1.0 / cdfyVSize))
                        .rgb;
 #endif
-  vec3 pdfColour = texture(icdf, (uv - vec2(0.0, pdfStart)) *
+  vec3 pdfColour = sampleIcdf(icdf, (uv - vec2(0.0, pdfStart)) *
                                             vec2(1.0, 1.0 / cdfyVSize)).zzz;
   float cdfyColour =
       texture2D(cdfy, (uv - vec2(0.0, cdfyStart)) * vec2(2.0, 1.0 / cdfyVSize))
           .r;
   float icdfyColour =
-      texture2D(icdf, (uv - vec2(0.5, cdfyStart)) * vec2(2.0, 1.0 / cdfyVSize))
+      sampleIcdf(icdf, (uv - vec2(0.5, cdfyStart)) * vec2(2.0, 1.0 / cdfyVSize))
           .g;
   float cdfxColour =
       texture2D(cdfx, (uv - vec2(0.0, cdfxStart)) * vec2(1.0, 1.0 / cdfxVSize))
           .r;
-  float icdfxColour = texture2D(icdf, (uv - vec2(0.0, icdfxStart)) *
+  float icdfxColour = sampleIcdf(icdf, (uv - vec2(0.0, icdfxStart)) *
                                            vec2(1.0, 1.0 / cdfxVSize))
                           .r;
 

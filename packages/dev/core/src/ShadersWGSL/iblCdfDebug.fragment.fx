@@ -1,4 +1,5 @@
 #define PI 3.1415927
+#include<iblCdfFunctions>
 varying vUV: vec2f;
 
 var cdfySampler: sampler;
@@ -59,14 +60,14 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
                        .rgb;
 #endif
   var pdfColour: vec3f =
-      textureSample(icdf, icdfSampler, (uv -  vec2f(0.0, pdfStart)) *  vec2f(1.0, 1.0 / cdfyVSize)).zzz;
+      sampleIcdf(icdf, (uv -  vec2f(0.0, pdfStart)) *  vec2f(1.0, 1.0 / cdfyVSize)).zzz;
   var cdfyColour: f32 =
       textureSample(cdfy, cdfySampler, (uv -  vec2f(0.0, cdfyStart)) *  vec2f(2.0, 1.0 / cdfyVSize)).r;
   var icdfyColour: f32 =
-      textureSample(icdf, icdfSampler, (uv -  vec2f(0.5, cdfyStart)) *  vec2f(2.0, 1.0 / cdfyVSize)).g;
+      sampleIcdf(icdf, (uv -  vec2f(0.5, cdfyStart)) *  vec2f(2.0, 1.0 / cdfyVSize)).g;
   var cdfxColour: f32 =
       textureSample(cdfx, cdfxSampler, (uv -  vec2f(0.0, cdfxStart)) *  vec2f(1.0, 1.0 / cdfxVSize)).r;
-  var icdfxColour: f32 = textureSample(icdf, icdfSampler, (uv -  vec2f(0.0, icdfxStart)) *
+  var icdfxColour: f32 = sampleIcdf(icdf, (uv -  vec2f(0.0, icdfxStart)) *
                                             vec2f(1.0, 1.0 / cdfxVSize)).r;
 
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {

@@ -13,8 +13,8 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
     {
         var Xi: vec2f = hammersley(i, NUM_SAMPLES);
         var T: vec2f;
-        T.x = textureSampleLevel(icdfSampler, icdfSamplerSampler, vec2(Xi.x, 0.0), 0.0).x;
-        T.y = textureSampleLevel(icdfSampler, icdfSamplerSampler, vec2(T.x, Xi.y), 0.0).y;
+        T.x = sampleIcdf(icdfSampler, vec2(Xi.x, 0.0)).x;
+        T.y = sampleIcdf(icdfSampler, vec2(T.x, Xi.y)).y;
         var Ls: vec3f = uv_to_normal(vec2f(1.0 - fract(T.x + 0.25), T.y));
         lightDir += Ls;
     }

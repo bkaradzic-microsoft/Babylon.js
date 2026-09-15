@@ -20,8 +20,8 @@ class FaceOrientation {
 /**
  * Bakes a cosine-convolved irradiance cube map on the CPU.
  *
- * Used as a fallback on engines that cannot render the GPU irradiance prefilter (Babylon Native,
- * WebGL1). Spherical harmonics are a 3rd-order approximation and lose a large amount of energy on
+ * Used as a fallback on engines that cannot render the GPU irradiance prefilter, such as WebGL1.
+ * Spherical harmonics are a 3rd-order approximation and lose a large amount of energy on
  * high-contrast HDR environments; a direct convolution keeps the peaks and matches the GPU prefilter.
  */
 export class CubeMapToIrradianceMapTools {
@@ -161,11 +161,8 @@ export class CubeMapToIrradianceMapTools {
             const yy = face.worldAxisForFileY.y;
             const yz = face.worldAxisForFileY.z;
 
-            // Match the source-face V walk above (v from outMinUV upward). An earlier attempt walked
-            // V top-down to "fix" seams for WebGL upload, but CPU irradiance is only consumed on
-            // engines that cannot GPU-prefilter (Babylon Native / WebGL1), and that inverted V made
-            // every face disagree with its neighbours under bgfx/Native cube sampling — diffuse IBL
-            // then looked like chrome mirrors instead of soft irradiance (tests 118/119 ~34%).
+            // Match the source-face V walk above. Reversing it previously broke cube-face continuity
+            // when Native used this fallback, making diffuse irradiance appear mirror-like.
             let v = outMinUV;
             for (let y = 0; y < outputSize; y++) {
                 let u = outMinUV;

@@ -1,6 +1,7 @@
 precision highp sampler2D;
 precision highp sampler3D;
 #include<helperFunctions>
+#include<iblCdfFunctions>
 varying vec2 vUV;
 
 #define DISABLE_UNIFORMITY_ANALYSIS
@@ -446,8 +447,8 @@ void main(void) {
     {
       vec2 r = plasticSequence(frameId * nbDirs + i);
       r = fract(r + vec2(2.0) * abs(noise.xy - vec2(0.5)));
-      T.x = textureLod(icdfSampler, vec2(r.x, 0.0), 0.0).x;
-      T.y = textureLod(icdfSampler, vec2(T.x, r.y), 0.0).y;
+      T.x = sampleIcdf(icdfSampler, vec2(r.x, 0.0)).x;
+      T.y = sampleIcdf(icdfSampler, vec2(T.x, r.y)).y;
       L = vec4(uv_to_normal(vec2(T.x - normalizedRotation, T.y)), 0);
       #ifndef RIGHT_HANDED
         L.z *= -1.0;
@@ -456,7 +457,7 @@ void main(void) {
     #ifdef COLOR_SHADOWS
       vec3 lightDir = uv_to_normal(vec2(1.0 - fract(T.x + 0.25), T.y));
       vec3 ibl = textureLod(iblSampler, lightDir, 0.0).xyz;
-      float pdf = textureLod(icdfSampler, T, 0.0).z;
+      float pdf = sampleIcdf(icdfSampler, T).z;
     #endif
     float cosNL = dot(N, L.xyz);
     float opacity = 0.0;

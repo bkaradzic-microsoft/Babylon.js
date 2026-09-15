@@ -2,6 +2,8 @@
     #if NUM_SAMPLES > 0
 
     #if defined(WEBGL2) || defined(WEBGPU) || defined(NATIVE)
+        #include<iblCdfFunctions>
+
         // Some drivers (e.g. certain Android/Adreno implementations) default fragment-shader int/uint
         // precision to mediump, which silently corrupts the 32-bit bit manipulation below.
         precision highp int;
@@ -241,8 +243,8 @@
 
                 #if IBL_CDF_FILTERING
                     vec2 T;
-                    T.x = texture2D(icdfSampler, vec2(Xi.x, 0.)).x;
-                    T.y = texture2D(icdfSampler, vec2(T.x, Xi.y)).y;
+                    T.x = sampleIcdf(icdfSampler, vec2(Xi.x, 0.)).x;
+                    T.y = sampleIcdf(icdfSampler, vec2(T.x, Xi.y)).y;
                     vec3 Ls = uv_to_normal(vec2(1.0 - fract(T.x + 0.25), T.y));
                     float NoL = dot(n, Ls);
                     float NoV = dot(n, inputV);
@@ -269,7 +271,7 @@
 
                 if (NoL > 0.) {
                     #if IBL_CDF_FILTERING
-                        float pdf = texture2D(icdfSampler, T).z;
+                        float pdf = sampleIcdf(icdfSampler, T).z;
                         vec3 c = textureCubeLodEXT(inputTexture, Ls, 0.).rgb;
                     #else
                         float pdf_inversed = PI / NoL;
