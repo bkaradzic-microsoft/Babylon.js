@@ -5030,12 +5030,8 @@ export class ThinNativeEngine extends ThinEngine {
     }
 
     public override getFontOffset(font: string): { ascent: number; height: number; descent: number } {
-        // GUI sizes every line of text from this (Control._GetFontOffset -> TextBlock line height,
-        // resizeToFit, InputText caret/selection), so the previous { 0, 0, 0 } stub collapsed every
-        // TextBlock/InputText to a single zero-height line stacked at the same y. There is no DOM to
-        // measure against here, so mirror the WebGL engine's DOM-less path (GetFontOffsetFromCanvas)
-        // and measure "Hg" through the native Canvas2D polyfill, which uses the same font that
-        // fillText will actually draw with. Results are cached per font string by the GUI caller.
+        // Match the browser's font line box for GUI layout, not just the ink in "Hg".
+        // Older Canvas runtimes may expose only glyph bounds.
         try {
             const canvas = this.createCanvas(64, 64);
             const context = canvas.getContext("2d");
@@ -5046,8 +5042,8 @@ export class ThinNativeEngine extends ThinEngine {
                 fontBoundingBoxAscent?: number;
                 fontBoundingBoxDescent?: number;
             };
-            const ascent = Number(metrics.actualBoundingBoxAscent ?? metrics.fontBoundingBoxAscent);
-            const descent = Number(metrics.actualBoundingBoxDescent ?? metrics.fontBoundingBoxDescent);
+            const ascent = Number(metrics.fontBoundingBoxAscent ?? metrics.actualBoundingBoxAscent);
+            const descent = Number(metrics.fontBoundingBoxDescent ?? metrics.actualBoundingBoxDescent);
             if (isFinite(ascent) && isFinite(descent) && ascent + descent > 0) {
                 return { ascent, height: ascent + descent, descent };
             }
