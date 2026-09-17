@@ -2113,11 +2113,12 @@ export class ThinNativeEngine extends ThinEngine {
             const context = canvas.getContext();
             // flush need to happen before getCanvasTexture: flush will create the render target synchronously (if it's not been created before)
             context.flush();
-            const source = canvas.getCanvasTexture();
+            const source = canvas.getCanvasTexture(premulAlpha, texture.generateMipMaps);
             this._commandBufferEncoder.startEncodingCommand(_native.Engine.COMMAND_COPYTEXTURE);
             this._commandBufferEncoder.encodeCommandArgAsNativeData(source as NativeData);
             this._commandBufferEncoder.encodeCommandArgAsNativeData(destination as NativeData);
             this._commandBufferEncoder.finishEncodingCommand();
+            texture._premulAlpha = premulAlpha;
             texture.isReady = true;
         }
     }
@@ -2127,7 +2128,8 @@ export class ThinNativeEngine extends ThinEngine {
         // Keep at least 1x1 because many bgfx methods assume a non-zero texture size.
         width = Math.max(Math.floor(width), 1);
         height = Math.max(Math.floor(height), 1);
-        return this.createRawTexture(new Uint8Array(width * height * 4), width, height, Constants.TEXTUREFORMAT_RGBA, false, false, samplingMode);
+        generateMipMaps = generateMipMaps && "supportsDynamicTextureMipMaps" in this._engine && this._engine.supportsDynamicTextureMipMaps === true;
+        return this.createRawTexture(new Uint8Array(width * height * 4), width, height, Constants.TEXTUREFORMAT_RGBA, generateMipMaps, false, samplingMode);
     }
 
     public override createVideoElement(constraints: MediaTrackConstraints): any {
