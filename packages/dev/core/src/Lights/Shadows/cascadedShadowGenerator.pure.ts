@@ -72,13 +72,6 @@ export class CascadedShadowGenerator extends ShadowGenerator {
 
     protected override _validateFilter(filter: number): number {
         if (filter === ShadowGenerator.FILTER_NONE || filter === ShadowGenerator.FILTER_PCF || filter === ShadowGenerator.FILTER_PCSS) {
-            // Native/bgfx cannot sample CSM color cascade arrays for FILTER_NONE hard shadows
-            // (always-lit receivers). Depth-array PCF is correct and is already the CSM default;
-            // remap filter=0 so multi-SG playgrounds still cast. forceSingleSampleFrameGraphTextures
-            // is the Native-only feature flag used as the engine gate.
-            if (filter === ShadowGenerator.FILTER_NONE && this._scene?.getEngine()?._features?.forceSingleSampleFrameGraphTextures) {
-                return ShadowGenerator.FILTER_PCF;
-            }
             return filter;
         }
 

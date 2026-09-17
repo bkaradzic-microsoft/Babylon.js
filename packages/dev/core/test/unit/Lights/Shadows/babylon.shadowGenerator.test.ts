@@ -4,8 +4,11 @@ import { type Engine } from "core/Engines/engine";
 import { FreeCamera } from "core/Cameras/freeCamera";
 import { Constants } from "core/Engines/constants";
 import { PointLight } from "core/Lights/pointLight";
+import { DirectionalLight } from "core/Lights/directionalLight";
+import { CascadedShadowGenerator } from "core/Lights/Shadows/cascadedShadowGenerator";
 import { ShadowGenerator } from "core/Lights/Shadows/shadowGenerator";
 import { StandardMaterial } from "core/Materials/standardMaterial";
+import { RenderTargetTexture } from "core/Materials/Textures/renderTargetTexture";
 import { Vector3 } from "core/Maths/math.vector";
 import { MeshBuilder } from "core/Meshes/meshBuilder";
 import { type SubMesh } from "core/Meshes/subMesh";
@@ -32,6 +35,40 @@ class TestShadowGenerator extends ShadowGenerator {
 }
 
 describe("ShadowGenerator", () => {
+    describe("cascaded filter selection", () => {
+        let engine: NullEngine;
+        let scene: Scene;
+
+        beforeEach(() => {
+            engine = new NullEngine();
+            engine._features.supportCSM = true;
+            engine._features.supportShadowSamplers = true;
+            scene = new Scene(engine);
+            new FreeCamera("camera", new Vector3(0, 0, -10), scene);
+            vi.spyOn(RenderTargetTexture.prototype, "createDepthStencilTexture").mockImplementation(() => {});
+        });
+
+        afterEach(() => {
+            engine.dispose();
+            vi.restoreAllMocks();
+        });
+
+        it.each([false, true])("preserves requested filters and sampler modes with Native FrameGraph restrictions=%s", (nativeFrameGraph) => {
+            engine._features.forceSingleSampleFrameGraphTextures = nativeFrameGraph;
+            const light = new DirectionalLight("directional", new Vector3(1, -2, 1), scene);
+            const generator = new CascadedShadowGenerator(32, light);
+            expect(generator.filter).toBe(ShadowGenerator.FILTER_PCF);
+
+            for (const filter of [ShadowGenerator.FILTER_NONE, ShadowGenerator.FILTER_PCF, ShadowGenerator.FILTER_PCSS, ShadowGenerator.FILTER_NONE]) {
+                generator.filter = filter;
+                expect(generator.filter).toBe(filter);
+                expect(generator.getShadowMap()!.samplingMode).toBe(
+                    filter === ShadowGenerator.FILTER_PCF ? Constants.TEXTURE_BILINEAR_SAMPLINGMODE : Constants.TEXTURE_NEAREST_SAMPLINGMODE
+                );
+            }
+        });
+    });
+
     describe("instantiate", () => {
         let subject: Engine;
 
