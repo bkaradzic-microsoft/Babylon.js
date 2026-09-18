@@ -1122,7 +1122,10 @@ export class ThinNativeEngine extends ThinEngine {
     /**
      * @internal
      */
-    public override _getShaderProcessingContext(_shaderLanguage: ShaderLanguage): Nullable<_IShaderProcessingContext> {
+    public override _getShaderProcessingContext(shaderLanguage: ShaderLanguage): Nullable<_IShaderProcessingContext> {
+        if (shaderLanguage === ShaderLanguage.WGSL) {
+            throw new Error("NativeEngine does not support WGSL graphics shaders.");
+        }
         return new NativeShaderProcessingContext();
     }
 
