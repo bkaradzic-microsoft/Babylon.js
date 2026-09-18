@@ -1,26 +1,18 @@
 
-### Addons
-
-- Add new MultiTexture class - [_New Feature_] by [abogartz](https://github.com/abogartz) ([#18822](https://github.com/BabylonJS/Babylon.js/pull/18822))
-
 ### Core
 
-- Decouple Gaussian classification for effective tree shaking - [_Bug Fix_] by [RaananW](https://github.com/RaananW) ([#18909](https://github.com/BabylonJS/Babylon.js/pull/18909))
-- Add dithered tile fade material plugin - [_New Feature_] by [CedricGuillemet](https://github.com/CedricGuillemet) ([#18902](https://github.com/BabylonJS/Babylon.js/pull/18902))
-- Add new MultiTexture class - [_New Feature_] by [abogartz](https://github.com/abogartz) ([#18822](https://github.com/BabylonJS/Babylon.js/pull/18822))
-- Fluid renderer: per-particle size for GPUParticleSystem + fix GPU particle quad offsets - [_Bug Fix_] by [tini2n](https://github.com/tini2n) ([#18888](https://github.com/BabylonJS/Babylon.js/pull/18888))
-- Improve USD materials, instancing, morphs, and skinning - [_Bug Fix_] by [SergioRZMasson](https://github.com/SergioRZMasson) ([#18900](https://github.com/BabylonJS/Babylon.js/pull/18900))
+- Add normalized occlusion query visibility API - [_New Feature_] by [RaananW](https://github.com/RaananW) ([#18919](https://github.com/BabylonJS/Babylon.js/pull/18919))
+- Frame graph: support Gaussian splats, sprites, and particles in geometry rendering - by [Popov72](https://github.com/Popov72) ([#18930](https://github.com/BabylonJS/Babylon.js/pull/18930))
+- WGSL: pass shadowTexture to computeShadowWithCSMPCF1 in the cascade blend branch - [_Bug Fix_] by [increasinglyHuman](https://github.com/increasinglyHuman) ([#18920](https://github.com/BabylonJS/Babylon.js/pull/18920))
+- Avoid blob URL round-trip for in-memory ImageBitmap sources - [_Bug Fix_] by [RaananW](https://github.com/RaananW) ([#18924](https://github.com/BabylonJS/Babylon.js/pull/18924))
+- Fix Gaussian splatting with horizontal fixed FOV - [_Bug Fix_] by [Popov72](https://github.com/Popov72) ([#18921](https://github.com/BabylonJS/Babylon.js/pull/18921))
+- Fix WebGPU occlusion query begin sequencing - [_Bug Fix_] by [RaananW](https://github.com/RaananW) ([#18918](https://github.com/BabylonJS/Babylon.js/pull/18918))
+- Fix: static Gaussian Splatting part disappears after compacting a streaming compound - by [raymondyfei](https://github.com/raymondyfei) ([#18917](https://github.com/BabylonJS/Babylon.js/pull/18917))
 
-### Loaders
+### Inspector
 
-- FBX loader: full format coverage, animation fidelity, DCC materials, NURBS, constraints - by [Pryme8](https://github.com/Pryme8) ([#18907](https://github.com/BabylonJS/Babylon.js/pull/18907))
-- Improve USD materials, instancing, morphs, and skinning - [_Bug Fix_] by [SergioRZMasson](https://github.com/SergioRZMasson) ([#18900](https://github.com/BabylonJS/Babylon.js/pull/18900))
-- chore(deps): update dependencies securely - by [RaananW](https://github.com/RaananW) ([#18899](https://github.com/BabylonJS/Babylon.js/pull/18899))
+- Inspector v2: Display mesh bounding box dimensions - [_New Feature_] by [Jeggery](https://github.com/Jeggery) ([#18875](https://github.com/BabylonJS/Babylon.js/pull/18875))
 
-### Sandbox
+### Node Render Graph Editor
 
-- Improve USD materials, instancing, morphs, and skinning - [_Bug Fix_] by [SergioRZMasson](https://github.com/SergioRZMasson) ([#18900](https://github.com/BabylonJS/Babylon.js/pull/18900))
-
-### Viewer
-
-- Decouple Gaussian classification for effective tree shaking - [_Bug Fix_] by [RaananW](https://github.com/RaananW) ([#18909](https://github.com/BabylonJS/Babylon.js/pull/18909))
+- Frame graph: support Gaussian splats, sprites, and particles in geometry rendering - by [Popov72](https://github.com/Popov72) ([#18930](https://github.com/BabylonJS/Babylon.js/pull/18930))

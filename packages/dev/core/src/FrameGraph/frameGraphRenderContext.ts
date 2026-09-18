@@ -120,22 +120,23 @@ export class FrameGraphRenderContext extends FrameGraphContext {
      * @param stencilClearValue Defines the value to use to clear the stencil buffer (default is 0)
      */
     public clear(color: Nullable<IColor4Like>, backBuffer: boolean, depth: boolean, stencil?: boolean, stencilClearValue = 0): void {
-            if (depth) {
-                this._promoteExplicitDepthForClear();
-            }
-            this._applyRenderTarget();
-            this._engine.clear(color, backBuffer, depth, stencil, stencilClearValue);
+        if (depth) {
+            this._promoteExplicitDepthForClear();
         }
+        this._applyRenderTarget();
+        this._engine.clear(color, backBuffer, depth, stencil, stencilClearValue);
+    }
 
     /**
-     * Clears the color attachments of the current render target
+     * Clears the color attachments of the current render target.
+     *
+     * Float, signed-integer, and unsigned-integer attachments can be mixed in the same layout.
      * @param color Defines the color to use
      * @param attachments The attachments to clear
      */
     public clearColorAttachments(color: Nullable<IColor4Like>, attachments: number[]): void {
         this._applyRenderTarget();
-        this._engine.bindAttachments(attachments);
-        this._engine.clear(color, true, false, false);
+        this._engine.clearAttachments(color, attachments, true, false, false);
     }
 
     /**
@@ -148,55 +149,54 @@ export class FrameGraphRenderContext extends FrameGraphContext {
      * @param stencilClearValue Defines the value to use to clear the stencil buffer (default is 0)
      */
     public clearAttachments(color: Nullable<IColor4Like>, attachments: number[], backBuffer: boolean, depth: boolean, stencil?: boolean, stencilClearValue = 0): void {
-            if (depth) {
-                this._promoteExplicitDepthForClear();
-            }
-            this._applyRenderTarget();
-            this._engine.bindAttachments(attachments);
-            this._engine.clear(color, backBuffer, depth, stencil, stencilClearValue);
+        if (depth) {
+            this._promoteExplicitDepthForClear();
         }
+        this._applyRenderTarget();
+        this._engine.clearAttachments(color, attachments, backBuffer, depth, stencil, stencilClearValue);
+    }
 
-        // Before a depth clear, force Native's frame-graph depth-sharing so the clear hits the
-        // real depth texture rather than an auto-generated private attachment. No-op on WebGL
-        // (engine has no _noteFrameGraphDepthCleared).
-        private _promoteExplicitDepthForClear(): void {
-            const engine = this._engine as AbstractEngine & {
-                _noteFrameGraphDepthCleared?: (texture: Nullable<InternalTexture>) => void;
-            };
-            if (!engine._noteFrameGraphDepthCleared) {
-                return;
-            }
-            const rtw = this._currentRenderTarget?.renderTargetWrapper as
-                | (import("../Engines/renderTargetWrapper").RenderTargetWrapper & {
-                      _framebuffer?: Nullable<unknown> | null;
-                  })
-                | undefined;
-            const depthTex = rtw?.depthStencilTexture ?? null;
-            if (!depthTex || !rtw) {
-                return;
-            }
-            engine._noteFrameGraphDepthCleared(depthTex);
-            // Drop any auto-depth framebuffer and force a rebind so the next clear/draw uses
-            // the shared explicit depth (NativeRenderTargetWrapper setter releases the old FB).
-            if (rtw._framebuffer) {
-                rtw._framebuffer = null;
-            }
-            this._renderTargetIsBound = false;
-            // _applyRenderTarget skips bind when engine._currentRenderTarget === rtw; unbind so
-            // the rebuild path runs even if this wrapper was already the current target.
-            if (this._engine._currentRenderTarget === rtw) {
-                this._engine.unBindFramebuffer(rtw);
-            }
+    // Before a depth clear, force Native's frame-graph depth-sharing so the clear hits the
+    // real depth texture rather than an auto-generated private attachment. No-op on WebGL
+    // (engine has no _noteFrameGraphDepthCleared).
+    private _promoteExplicitDepthForClear(): void {
+        const engine = this._engine as AbstractEngine & {
+            _noteFrameGraphDepthCleared?: (texture: Nullable<InternalTexture>) => void;
+        };
+        if (!engine._noteFrameGraphDepthCleared) {
+            return;
         }
+        const rtw = this._currentRenderTarget?.renderTargetWrapper as
+            | (import("../Engines/renderTargetWrapper").RenderTargetWrapper & {
+                  _framebuffer?: Nullable<unknown> | null;
+              })
+            | undefined;
+        const depthTex = rtw?.depthStencilTexture ?? null;
+        if (!depthTex || !rtw) {
+            return;
+        }
+        engine._noteFrameGraphDepthCleared(depthTex);
+        // Drop any auto-depth framebuffer and force a rebind so the next clear/draw uses
+        // the shared explicit depth (NativeRenderTargetWrapper setter releases the old FB).
+        if (rtw._framebuffer) {
+            rtw._framebuffer = null;
+        }
+        this._renderTargetIsBound = false;
+        // _applyRenderTarget skips bind when engine._currentRenderTarget === rtw; unbind so
+        // the rebuild path runs even if this wrapper was already the current target.
+        if (this._engine._currentRenderTarget === rtw) {
+            this._engine.unBindFramebuffer(rtw);
+        }
+    }
 
-        /**
-         * Binds the attachments to the current render target
-         * @param attachments The attachments to bind
-         */
-        public bindAttachments(attachments: number[]): void {
-            this._applyRenderTarget();
-            this._engine.bindAttachments(attachments);
-        }
+    /**
+     * Binds the attachments to the current render target
+     * @param attachments The attachments to bind
+     */
+    public bindAttachments(attachments: number[]): void {
+        this._applyRenderTarget();
+        this._engine.bindAttachments(attachments);
+    }
 
     /**
      * Generates mipmaps for the current render target

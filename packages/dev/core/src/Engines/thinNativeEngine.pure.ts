@@ -408,19 +408,19 @@ export class ThinNativeEngine extends ThinEngine {
     >;
 
     // Depth-sharing bookkeeping for frame graph render targets. A depth-stencil hardware texture is BORROWED
-        // (attached as an explicit shared depth) by a color framebuffer when:
-        //   (1) a standalone depth-clear / multi-color-target pattern requires one real depth buffer, or
-        //   (2) the color texture was already rendered into without this depth (e.g. bloom merge, then an
-        //       ObjectRenderer overlay that attaches an imported depth) — auto-generating a private depth then
-        //       leaves it uncleared (ObjectRenderer skips group-0 depth clear to preserve the prior color) and
-        //       every fragment fails LEQUAL (FrameGraph custom rendering / test 458).
-        // Depths that pair with a single color target from the first bind keep auto-generating (and inline-
-        // clearing) their own depth so sampleable InternalTexture depths that are never written stay out of the
-        // framebuffer until `_noteFrameGraphDepthSampled` promotes them (DoF / SSR / volumetric).
-        // Keyed by InternalTexture.uniqueId (never reused) rather than the bgfx hardware handle (pooled).
-        // - _frameGraphSharedDepths: depth uniqueIds known to require borrowing (monotonic).
-        // - _frameGraphDepthFirstColor: first color-attachment-0 uniqueId seen for a depth (detect multi-target).
-        // - _frameGraphDepthWrappers: color wrappers referencing a depth, so late sharing can invalidate caches.
+    // (attached as an explicit shared depth) by a color framebuffer when:
+    //   (1) a standalone depth-clear / multi-color-target pattern requires one real depth buffer, or
+    //   (2) the color texture was already rendered into without this depth (e.g. bloom merge, then an
+    //       ObjectRenderer overlay that attaches an imported depth) — auto-generating a private depth then
+    //       leaves it uncleared (ObjectRenderer skips group-0 depth clear to preserve the prior color) and
+    //       every fragment fails LEQUAL (FrameGraph custom rendering / test 458).
+    // Depths that pair with a single color target from the first bind keep auto-generating (and inline-
+    // clearing) their own depth so sampleable InternalTexture depths that are never written stay out of the
+    // framebuffer until `_noteFrameGraphDepthSampled` promotes them (DoF / SSR / volumetric).
+    // Keyed by InternalTexture.uniqueId (never reused) rather than the bgfx hardware handle (pooled).
+    // - _frameGraphSharedDepths: depth uniqueIds known to require borrowing (monotonic).
+    // - _frameGraphDepthFirstColor: first color-attachment-0 uniqueId seen for a depth (detect multi-target).
+    // - _frameGraphDepthWrappers: color wrappers referencing a depth, so late sharing can invalidate caches.
     private _frameGraphSharedDepths: Set<number>;
     private _frameGraphDepthFirstColor: Map<number, number>;
     private _frameGraphDepthWrappers: Map<number, NativeRenderTargetWrapper[]>;
@@ -572,11 +572,11 @@ export class ThinNativeEngine extends ThinEngine {
             forceBitmapOverHTMLImageElement: true,
             supportRenderAndCopyToLodForFloatTextures: false,
             // Native can attach an explicit depth/stencil texture to a render target (see
-                        // _createDepthStencilTexture) and sample it afterwards. Hardware comparison samplers are
-                        // available through bgfx BGFX_SAMPLER_COMPARE_* (set via updateTextureComparisonFunction),
-                        // which is what ShadowGenerator needs for FILTER_PCF / FILTER_PCSS (incl. cascaded shadows).
+            // _createDepthStencilTexture) and sample it afterwards. Hardware comparison samplers are
+            // available through bgfx BGFX_SAMPLER_COMPARE_* (set via updateTextureComparisonFunction),
+            // which is what ShadowGenerator needs for FILTER_PCF / FILTER_PCSS (incl. cascaded shadows).
             supportDepthStencilTexture: true,
-                        supportShadowSamplers: true,
+            supportShadowSamplers: true,
             uniformBufferHardCheckMatrix: false,
             // Native supports GPU cube prefiltering (HDRFiltering / HDRIrradianceFiltering): the render path
             // binds a specific cube-face + mip via bindFramebuffer(faceIndex, lodLevel) and convolves the
@@ -854,11 +854,11 @@ export class ThinNativeEngine extends ThinEngine {
         this._commandBufferEncoder.encodeCommandArgAsFloat32(color ? color.r : 0);
         this._commandBufferEncoder.encodeCommandArgAsFloat32(color ? color.g : 0);
         this._commandBufferEncoder.encodeCommandArgAsFloat32(color ? color.b : 0);
-                // Playgrounds often assign Color3 to scene.clearColor; Color3 has no .a, so
-                // `color.a` is undefined and was encoded as 0 → transparent clear. PNG
-                // screenshots then show black sky on dark HTML backgrounds while RGB still
-                // matches (pixel compare ignores alpha). Default missing alpha to opaque.
-                this._commandBufferEncoder.encodeCommandArgAsFloat32(color ? (color.a ?? 1) : 1);
+        // Playgrounds often assign Color3 to scene.clearColor; Color3 has no .a, so
+        // `color.a` is undefined and was encoded as 0 → transparent clear. PNG
+        // screenshots then show black sky on dark HTML backgrounds while RGB still
+        // matches (pixel compare ignores alpha). Default missing alpha to opaque.
+        this._commandBufferEncoder.encodeCommandArgAsFloat32(color ? (color.a ?? 1) : 1);
         this._commandBufferEncoder.encodeCommandArgAsUInt32(depth ? 1 : 0);
         this._commandBufferEncoder.encodeCommandArgAsFloat32(depth && this.useReverseDepthBuffer ? 0 : 1);
         this._commandBufferEncoder.encodeCommandArgAsUInt32(stencil ? 1 : 0);
@@ -1565,26 +1565,26 @@ export class ThinNativeEngine extends ThinEngine {
             getNativeStencilDepthFail(this._stencilOpDepthFail),
             getNativeStencilDepthPass(this._stencilOpStencilDepthPass),
             getNativeStencilFunc(this._stencilFunc),
-                        this._stencilFuncRef,
-                        this._stencilFuncMask
-                    );
-                }
+            this._stencilFuncRef,
+            this._stencilFuncMask
+        );
+    }
 
-                private _setStencil(mask: number, stencilOpFail: number, depthOpFail: number, depthOpPass: number, func: number, ref: number, funcMask: number = 0xff) {
-                    this._commandBufferEncoder.startEncodingCommand(_native.Engine.COMMAND_SETSTENCIL);
-                    this._commandBufferEncoder.encodeCommandArgAsUInt32(mask);
-                    this._commandBufferEncoder.encodeCommandArgAsUInt32(stencilOpFail);
-                    this._commandBufferEncoder.encodeCommandArgAsUInt32(depthOpFail);
-                    this._commandBufferEncoder.encodeCommandArgAsUInt32(depthOpPass);
-                    this._commandBufferEncoder.encodeCommandArgAsUInt32(func);
-                    this._commandBufferEncoder.encodeCommandArgAsUInt32(ref);
-                    // Stencil function mask (gl.stencilFunc mask / BGFX_STENCIL_FUNC_RMASK). Required for
-                    // HighlightLayer, which compares only the glowing-mesh reference bits while ignoring
-                    // lower reserved bits. Without this, Native always used 0xFF and the outer/inner glow
-                    // stencil tests matched the wrong fragments.
-                    this._commandBufferEncoder.encodeCommandArgAsUInt32(funcMask & 0xff);
-                    this._commandBufferEncoder.finishEncodingCommand();
-                }
+    private _setStencil(mask: number, stencilOpFail: number, depthOpFail: number, depthOpPass: number, func: number, ref: number, funcMask: number = 0xff) {
+        this._commandBufferEncoder.startEncodingCommand(_native.Engine.COMMAND_SETSTENCIL);
+        this._commandBufferEncoder.encodeCommandArgAsUInt32(mask);
+        this._commandBufferEncoder.encodeCommandArgAsUInt32(stencilOpFail);
+        this._commandBufferEncoder.encodeCommandArgAsUInt32(depthOpFail);
+        this._commandBufferEncoder.encodeCommandArgAsUInt32(depthOpPass);
+        this._commandBufferEncoder.encodeCommandArgAsUInt32(func);
+        this._commandBufferEncoder.encodeCommandArgAsUInt32(ref);
+        // Stencil function mask (gl.stencilFunc mask / BGFX_STENCIL_FUNC_RMASK). Required for
+        // HighlightLayer, which compares only the glowing-mesh reference bits while ignoring
+        // lower reserved bits. Without this, Native always used 0xFF and the outer/inner glow
+        // stencil tests matched the wrong fragments.
+        this._commandBufferEncoder.encodeCommandArgAsUInt32(funcMask & 0xff);
+        this._commandBufferEncoder.finishEncodingCommand();
+    }
 
     /**
      * Enable or disable the stencil buffer
@@ -1659,13 +1659,13 @@ export class ThinNativeEngine extends ThinEngine {
     }
 
     /**
-         * Sets the current stencil function mask
-         * @param mask defines the new stencil function mask to use
+     * Sets the current stencil function mask
+     * @param mask defines the new stencil function mask to use
      */
     public override setStencilFunctionMask(mask: number) {
         this._stencilFuncMask = mask;
-            this.applyStencil();
-        }
+        this.applyStencil();
+    }
 
     /**
      * Sets the stencil operation to use when stencil fails
@@ -1769,32 +1769,32 @@ export class ThinNativeEngine extends ThinEngine {
         this._alphaMode[targetIndex] = mode;
     }
 
-        /**
-         * Sets the current alpha blend equation (ADD / SUB / MAX / MIN / ...).
-         * Dual depth peeling (OIT) requires ALPHA_EQUATION_MAX so peel passes accumulate
-         * farthest/nearest depths. Native previously only wired blend *factors*; equations
-         * stayed at bgfx's default ADD and transparent peels never wrote useful depth.
-         * @param equation one of Constants.ALPHA_EQUATION_*
-         * @param targetIndex MRT attachment index (Native applies equation globally; kept for API parity)
-         */
-        public override setAlphaEquation(equation: number, targetIndex: number = 0): void {
-            if (this._alphaEquation[targetIndex] === equation) {
-                return;
-            }
-
-            this._alphaEquation[targetIndex] = equation;
-
-            const command = _native.Engine.COMMAND_SETBLENDEQUATION;
-            if (!command) {
-                // Older Babylon Native binaries predating blend-equation support.
-                return;
-            }
-
-            this._commandBufferEncoder.startEncodingCommand(command);
-            // Pass the Babylon Constants.ALPHA_EQUATION_* value; NativeEngine::SetBlendEquation maps it to bgfx.
-            this._commandBufferEncoder.encodeCommandArgAsUInt32(equation);
-            this._commandBufferEncoder.finishEncodingCommand();
+    /**
+     * Sets the current alpha blend equation (ADD / SUB / MAX / MIN / ...).
+     * Dual depth peeling (OIT) requires ALPHA_EQUATION_MAX so peel passes accumulate
+     * farthest/nearest depths. Native previously only wired blend *factors*; equations
+     * stayed at bgfx's default ADD and transparent peels never wrote useful depth.
+     * @param equation one of Constants.ALPHA_EQUATION_*
+     * @param targetIndex MRT attachment index (Native applies equation globally; kept for API parity)
+     */
+    public override setAlphaEquation(equation: number, targetIndex: number = 0): void {
+        if (this._alphaEquation[targetIndex] === equation) {
+            return;
         }
+
+        this._alphaEquation[targetIndex] = equation;
+
+        const command = _native.Engine.COMMAND_SETBLENDEQUATION;
+        if (!command) {
+            // Older Babylon Native binaries predating blend-equation support.
+            return;
+        }
+
+        this._commandBufferEncoder.startEncodingCommand(command);
+        // Pass the Babylon Constants.ALPHA_EQUATION_* value; NativeEngine::SetBlendEquation maps it to bgfx.
+        this._commandBufferEncoder.encodeCommandArgAsUInt32(equation);
+        this._commandBufferEncoder.finishEncodingCommand();
+    }
 
     public override setInt(uniform: WebGLUniformLocation, int: number): boolean {
         if (!uniform) {
@@ -2449,7 +2449,7 @@ export class ThinNativeEngine extends ThinEngine {
         // Native has no 3-component float format, so RGB sources are widened to RGBA here; keep the widened
         // faces so we can build the mip chain from them below (the WebGL path relies on gl.generateMipmap for
         // this, which does not exist on Native).
-        let faces: ArrayBufferView[] = [];
+        const faces: ArrayBufferView[] = [];
         for (let faceIndex = 0; faceIndex < 6; faceIndex++) {
             const faceData =
                 format === Constants.TEXTUREFORMAT_RGB
@@ -2476,8 +2476,6 @@ export class ThinNativeEngine extends ThinEngine {
                 mipLevel++;
             }
         }
-        faces = [];
-
         texture.isReady = true;
     }
 
@@ -2902,8 +2900,6 @@ export class ThinNativeEngine extends ThinEngine {
         texture.type = Constants.TEXTURETYPE_UNSIGNED_BYTE;
         texture._comparisonFunction = options.comparisonFunction ?? 0;
 
-
-
         if (nativeRTWrapper._framebuffers) {
             // Layered (2D array) or cube render target: the color framebuffers were created one-per-layer
             // (see createRenderTargetTexture / createRenderTargetCubeTexture). When the color RTT was built
@@ -2925,9 +2921,7 @@ export class ThinNativeEngine extends ThinEngine {
                 for (let layer = 0; layer < layerCount; layer++) {
                     // First call creates the multi-layer sampleable depth and aliases it into nativeDepth;
                     // subsequent calls borrow the same depth array and attach the matching layer.
-                    framebuffers.push(
-                        this._engine.createMultiFrameBuffer([nativeColor], width, height, generateStencil, true, samples, [layer], nativeDepth)
-                    );
+                    framebuffers.push(this._engine.createMultiFrameBuffer([nativeColor], width, height, generateStencil, true, samples, [layer], nativeDepth));
                 }
                 nativeRTWrapper._framebuffers = framebuffers;
                 this._setTextureSampling(nativeDepth, getNativeSamplingMode(texture.samplingMode));
@@ -2944,16 +2938,7 @@ export class ThinNativeEngine extends ThinEngine {
         // it aliases back into the supplied texture so it can be sampled afterwards.
         const colorResource = rtWrapper.texture?._hardwareTexture?.underlyingResource;
         const nativeDepth = texture._hardwareTexture!.underlyingResource;
-        const framebuffer = this._engine.createMultiFrameBuffer(
-            colorResource ? [colorResource] : [],
-            width,
-            height,
-            generateStencil,
-            true,
-            samples,
-            undefined,
-            nativeDepth
-        );
+        const framebuffer = this._engine.createMultiFrameBuffer(colorResource ? [colorResource] : [], width, height, generateStencil, true, samples, undefined, nativeDepth);
         nativeRTWrapper._framebufferDepthStencil = framebuffer;
         this._setTextureSampling(nativeDepth, getNativeSamplingMode(texture.samplingMode));
         this.updateTextureComparisonFunction(texture, texture._comparisonFunction);
@@ -3083,28 +3068,28 @@ export class ThinNativeEngine extends ThinEngine {
         const samples = textures[0].samples || nativeRTWrapper.samples || 1;
 
         // When the frame graph supplies an explicit depth-stencil texture, decide whether this color wrapper
-                // must BORROW it (geometry-buffer / motion-blur / color-then-depth-overlay) or keep auto-generating
-                // an inline-cleared private depth (single-color-target first bind). See field comments above.
-                const explicitDepthResource = depthStencilTexture?._hardwareTexture?.underlyingResource;
-                const cached = hardwareTexture._frameGraphFramebuffer;
-                const cachedMeta = cached ? this._frameGraphFramebufferRefCount.get(cached) : undefined;
+        // must BORROW it (geometry-buffer / motion-blur / color-then-depth-overlay) or keep auto-generating
+        // an inline-cleared private depth (single-color-target first bind). See field comments above.
+        const explicitDepthResource = depthStencilTexture?._hardwareTexture?.underlyingResource;
+        const cached = hardwareTexture._frameGraphFramebuffer;
+        const cachedMeta = cached ? this._frameGraphFramebufferRefCount.get(cached) : undefined;
 
-                let shareExplicitDepth = false;
-                if (explicitDepthResource && depthStencilTexture) {
-                    // Multi-target / already-shared / depth-only-clear registration.
-                    shareExplicitDepth = this._isFrameGraphDepthShared(depthStencilTexture.uniqueId, textures[0].uniqueId, nativeRTWrapper);
-                    // Color texture was previously bound as color-only (no depth) — e.g. bloom merge, then an
-                    // ObjectRenderer overlay that attaches an imported depth. A fresh auto-depth would never be
-                    // cleared (ObjectRenderer skips group-0 depth clear to preserve the prior color) and every
-                    // fragment fails LEQUAL. Only trigger on hasDepth===false; do NOT treat "prior auto-depth
-                    // vs explicit depth" as a reason to share — that regresses DoF/TAA/highlight which rely on
-                    // first-bind auto-depth until `_noteFrameGraphDepthSampled` promotes.
-                    if (!shareExplicitDepth && cachedMeta && !cachedMeta.hasDepth) {
-                        this._markFrameGraphDepthShared(depthStencilTexture.uniqueId);
-                        shareExplicitDepth = true;
-                    }
-                }
-                const sharedDepthResource = shareExplicitDepth ? explicitDepthResource : undefined;
+        let shareExplicitDepth = false;
+        if (explicitDepthResource && depthStencilTexture) {
+            // Multi-target / already-shared / depth-only-clear registration.
+            shareExplicitDepth = this._isFrameGraphDepthShared(depthStencilTexture.uniqueId, textures[0].uniqueId, nativeRTWrapper);
+            // Color texture was previously bound as color-only (no depth) — e.g. bloom merge, then an
+            // ObjectRenderer overlay that attaches an imported depth. A fresh auto-depth would never be
+            // cleared (ObjectRenderer skips group-0 depth clear to preserve the prior color) and every
+            // fragment fails LEQUAL. Only trigger on hasDepth===false; do NOT treat "prior auto-depth
+            // vs explicit depth" as a reason to share — that regresses DoF/TAA/highlight which rely on
+            // first-bind auto-depth until `_noteFrameGraphDepthSampled` promotes.
+            if (!shareExplicitDepth && cachedMeta && !cachedMeta.hasDepth) {
+                this._markFrameGraphDepthShared(depthStencilTexture.uniqueId);
+                shareExplicitDepth = true;
+            }
+        }
+        const sharedDepthResource = shareExplicitDepth ? explicitDepthResource : undefined;
 
         // Reuse the cached framebuffer when it is compatible: same color-attachment count, it has a depth
         // buffer when this pass needs one (a pass that does not need depth can safely reuse a depth framebuffer),
@@ -3181,21 +3166,21 @@ export class ThinNativeEngine extends ThinEngine {
         this._markFrameGraphDepthShared(texture.uniqueId);
     }
 
-        /**
-             * Promote a frame-graph depth texture to shared before a clear writes into it.
-             * Without this, a Clear(color+depth) can bind an auto-generated private depth (the
-             * "single color target" optimization) while a later Geometry/ObjectRenderer MRT pass
-             * promotes the same handle to shared and depth-tests against the never-cleared real
-             * texture — which is exactly the multi-RTT MSAA depth-ordering failure (table
-             * occludes nearer sphere). Mirrors the depth-only clear path that already marks shared.
-             * @internal
-             */
-            public _noteFrameGraphDepthCleared(texture: Nullable<InternalTexture>): void {
-                if (!texture) {
-                    return;
-                }
-                this._markFrameGraphDepthShared(texture.uniqueId);
-            }
+    /**
+     * Promote a frame-graph depth texture to shared before a clear writes into it.
+     * Without this, a Clear(color+depth) can bind an auto-generated private depth (the
+     * "single color target" optimization) while a later Geometry/ObjectRenderer MRT pass
+     * promotes the same handle to shared and depth-tests against the never-cleared real
+     * texture — which is exactly the multi-RTT MSAA depth-ordering failure (table
+     * occludes nearer sphere). Mirrors the depth-only clear path that already marks shared.
+     * @internal
+     */
+    public _noteFrameGraphDepthCleared(texture: Nullable<InternalTexture>): void {
+        if (!texture) {
+            return;
+        }
+        this._markFrameGraphDepthShared(texture.uniqueId);
+    }
 
     // Decides whether a frame graph color wrapper should borrow its explicit depth-stencil texture as a shared
     // depth attachment. A depth is shared when it is used by color wrappers that render to DIFFERENT primary
@@ -3861,40 +3846,33 @@ export class ThinNativeEngine extends ThinEngine {
         const width = rtWrapper.width;
         const height = rtWrapper.height;
 
-                // Prefer an explicit shared depth texture when present (OIT depth peeling shareDepth, FG depth
-                // attached after dontCreateTextures). Otherwise fall back to auto depth from _generateDepthBuffer.
-                const explicitDepth = rtWrapper._depthStencilTexture?._hardwareTexture?.underlyingResource as NativeTexture | undefined;
-                const generateDepthBuffer = !!explicitDepth || rtWrapper._generateDepthBuffer;
+        // Prefer an explicit shared depth texture when present (OIT depth peeling shareDepth, FG depth
+        // attached after dontCreateTextures). Otherwise fall back to auto depth from _generateDepthBuffer.
+        const explicitDepth = rtWrapper._depthStencilTexture?._hardwareTexture?.underlyingResource as NativeTexture | undefined;
+        const generateDepthBuffer = !!explicitDepth || rtWrapper._generateDepthBuffer;
 
-                if (this._engine.createMultiFrameBuffer) {
-                    rtWrapper._framebuffer = this._engine.createMultiFrameBuffer(
-                        colorHandles,
-                        width,
-                        height,
-                        rtWrapper._generateStencilBuffer,
-                        generateDepthBuffer,
-                        rtWrapper._samples,
-                        undefined,
-                        explicitDepth
-                    );
-                } else {
-                    // Older Babylon Native binaries (predating multi render target support) do not expose createMultiFrameBuffer.
-                    // Fall back to a single-attachment framebuffer bound to the first color target so the scene keeps rendering.
-                    // Warn once (limit 1): the framebuffer can be rebuilt many times during attachment setup/swaps.
-                    Logger.Warn(
-                        "createMultiFrameBuffer is not supported by this version of Babylon Native; multi render targets are unavailable. Falling back to a single-attachment framebuffer bound to the first color target.",
-                        1
-                    );
-                    rtWrapper._framebuffer = this._engine.createFrameBuffer(
-                        colorHandles[0],
-                        width,
-                        height,
-                        rtWrapper._generateStencilBuffer,
-                        generateDepthBuffer,
-                        rtWrapper._samples
-                    );
-                }
-            }
+        if (this._engine.createMultiFrameBuffer) {
+            rtWrapper._framebuffer = this._engine.createMultiFrameBuffer(
+                colorHandles,
+                width,
+                height,
+                rtWrapper._generateStencilBuffer,
+                generateDepthBuffer,
+                rtWrapper._samples,
+                undefined,
+                explicitDepth
+            );
+        } else {
+            // Older Babylon Native binaries (predating multi render target support) do not expose createMultiFrameBuffer.
+            // Fall back to a single-attachment framebuffer bound to the first color target so the scene keeps rendering.
+            // Warn once (limit 1): the framebuffer can be rebuilt many times during attachment setup/swaps.
+            Logger.Warn(
+                "createMultiFrameBuffer is not supported by this version of Babylon Native; multi render targets are unavailable. Falling back to a single-attachment framebuffer bound to the first color target.",
+                1
+            );
+            rtWrapper._framebuffer = this._engine.createFrameBuffer(colorHandles[0], width, height, rtWrapper._generateStencilBuffer, generateDepthBuffer, rtWrapper._samples);
+        }
+    }
 
     public override generateMipMapsForCubemap(_texture: InternalTexture, _unbind = true): void {
         // The WebGL path rebinds gl.TEXTURE_CUBE_MAP and calls gl.generateMipmap; both deref _gl, which is
@@ -3922,6 +3900,18 @@ export class ThinNativeEngine extends ThinEngine {
 
         // An empty layout disables color clears; it must not clear every attachment instead.
         this._clearAttachmentMask = mask;
+    }
+
+    public override clearAttachments(
+        color: Nullable<IColor4Like>,
+        attachments: number[],
+        clearColor: boolean,
+        clearDepth: boolean,
+        clearStencil = false,
+        stencilClearValue = 0
+    ): void {
+        this.bindAttachments(attachments);
+        this.clear(color, clearColor, clearDepth, clearStencil, stencilClearValue);
     }
 
     public override buildTextureLayout(textureStatus: boolean[], _backBufferLayout = false): number[] {
@@ -3952,15 +3942,15 @@ export class ThinNativeEngine extends ThinEngine {
     }
 
     public override unBindMultiColorAttachmentFramebuffer(_rtWrapper: RenderTargetWrapper, _disableGenerateMipMaps = false, onBeforeUnbind?: () => void): void {
-            // Full-frame viewport before unbind so bgfx MSAA resolve is not clipped to a
-            // prior sub-rect (e.g. FG CopyTexture viewport) — see _resetViewportForResolve.
-            this._resetViewportForResolve();
-            this._currentRenderTarget = null;
-            if (onBeforeUnbind) {
-                onBeforeUnbind();
-            }
-            this._bindUnboundFramebuffer(null);
+        // Full-frame viewport before unbind so bgfx MSAA resolve is not clipped to a
+        // prior sub-rect (e.g. FG CopyTexture viewport) — see _resetViewportForResolve.
+        this._resetViewportForResolve();
+        this._currentRenderTarget = null;
+        if (onBeforeUnbind) {
+            onBeforeUnbind();
         }
+        this._bindUnboundFramebuffer(null);
+    }
 
     public override updateMultipleRenderTargetTextureSampleCount(rtWrapper: Nullable<RenderTargetWrapper>, samples: number, _initializeBuffers = true): number {
         if (!rtWrapper || rtWrapper.samples === samples) {
@@ -4150,79 +4140,79 @@ export class ThinNativeEngine extends ThinEngine {
         // framebuffer here from the current textures + their per-attachment layer/face indices.
         if (nativeRTWrapper.isMulti && (nativeRTWrapper.is3D || nativeRTWrapper._isMixedTypeMRT || this._isLayeredFrameGraphMRT(nativeRTWrapper))) {
             this._bindLayeredMultiFramebuffer(nativeRTWrapper);
-                this._applyBoundViewport(forceFullscreenViewport);
-                return;
-            }
-
-            // Single 3D render target (IBL voxel grid + its procedural mip chain): render to the requested
-            // (mip, layer) through a lazily-built, cached per-slice framebuffer. requiredWidth/Height carry the
-            // mip dimensions for the voxel mip-copy pass (forceFullscreenViewport is always set by that caller).
-            if (nativeRTWrapper.is3D) {
-                this._bindUnboundFramebuffer(this._get3DLayerFramebuffer(nativeRTWrapper, lodLevel ?? 0, layer ?? 0, requiredWidth, requiredHeight));
-                this._applyBoundViewport(forceFullscreenViewport);
-                return;
-            }
-
-            if (requiredWidth || requiredHeight) {
-                throw new Error("Required width/height for frame buffers not yet supported in NativeEngine.");
-            }
-
-            // Frame graph render targets are created via createMultipleRenderTarget({ dontCreateTextures: true }),
-            // so no bgfx framebuffer is built up-front; the externally-allocated color/depth textures are attached
-            // afterwards via setTexture/setDepthStencilTexture. Lazily build a framebuffer from those textures the
-            // first time the wrapper is bound. Several wrappers can reference the same underlying texture(s), so the
-            // framebuffer is cached on (and shared through) the first color texture's hardware wrapper to avoid each
-            // fresh framebuffer/view clearing the texture and clobbering earlier passes.
-            if (!nativeRTWrapper._framebuffers && !nativeRTWrapper._framebufferDepthStencil && !nativeRTWrapper._framebuffer) {
-                this._buildFrameGraphFramebuffer(nativeRTWrapper);
-            }
-
-            if (nativeRTWrapper._framebuffers) {
-                // _framebuffers is indexed by cube face for cube render targets, but by array layer for 2D-array
-                // render targets (cascaded shadow maps, the atmosphere aerial-perspective LUT). Callers pass the
-                // face in `faceIndex` and the array slice in `layer`, so pick whichever applies to this wrapper;
-                // indexing a layered target by `faceIndex` bound slice 0 for every layer and left slices 1..N-1
-                // unwritten.
-                const isCubeTarget = nativeRTWrapper.isCube;
-                const framebufferIndex = isCubeTarget ? faceIndex ?? 0 : layer || faceIndex || 0;
-
-                // Cube render target: bind the framebuffer for the requested face. HDR prefiltering renders each
-                // roughness level into its own mip, so for lodLevel > 0 lazily build/cache a per-(face, mip)
-                // framebuffer; the pre-built _framebuffers array only targets mip 0.
-                if (lodLevel && isCubeTarget) {
-                    this._bindUnboundFramebuffer(this._getCubeFaceMipFramebuffer(nativeRTWrapper, faceIndex ?? 0, lodLevel));
-                } else {
-                    this._bindUnboundFramebuffer(nativeRTWrapper._framebuffers[Math.min(framebufferIndex, nativeRTWrapper._framebuffers.length - 1)]);
-                }
-            } else if (faceIndex) {
-                throw new Error("Cuboid frame buffers are not yet supported in NativeEngine.");
-            } else if (nativeRTWrapper._framebufferDepthStencil) {
-                this._bindUnboundFramebuffer(nativeRTWrapper._framebufferDepthStencil);
-            } else {
-                this._bindUnboundFramebuffer(nativeRTWrapper._framebuffer);
-            }
-
-            // Match ThinEngine/WebGPU: viewport is engine-global and must be reapplied after a framebuffer
-            // bind. Native stores viewport per FrameBuffer, so without this a prior setViewport (e.g. FG
-            // CopyTexture with a sub-rect) is lost when _applyRenderTarget binds the destination RT and
-            // the copy draws full-screen instead.
             this._applyBoundViewport(forceFullscreenViewport);
+            return;
         }
 
-        // Re-apply the engine's cached viewport onto the newly bound framebuffer (WebGL/WebGPU behaviour).
-        // forceFullscreenViewport paints 0..1 without clobbering _cachedViewport, matching ThinEngine's
-        // use of _viewport() for the fullscreen path.
-        private _applyBoundViewport(forceFullscreenViewport?: boolean): void {
-            if (this._cachedViewport && !forceFullscreenViewport) {
-                this.setViewport(this._cachedViewport);
-                return;
-            }
-            if (forceFullscreenViewport) {
-                const cached = this._cachedViewport;
-                this.setViewport({ x: 0, y: 0, width: 1, height: 1 });
-                this._cachedViewport = cached;
-            }
+        // Single 3D render target (IBL voxel grid + its procedural mip chain): render to the requested
+        // (mip, layer) through a lazily-built, cached per-slice framebuffer. requiredWidth/Height carry the
+        // mip dimensions for the voxel mip-copy pass (forceFullscreenViewport is always set by that caller).
+        if (nativeRTWrapper.is3D) {
+            this._bindUnboundFramebuffer(this._get3DLayerFramebuffer(nativeRTWrapper, lodLevel ?? 0, layer ?? 0, requiredWidth, requiredHeight));
+            this._applyBoundViewport(forceFullscreenViewport);
+            return;
         }
+
+        if (requiredWidth || requiredHeight) {
+            throw new Error("Required width/height for frame buffers not yet supported in NativeEngine.");
+        }
+
+        // Frame graph render targets are created via createMultipleRenderTarget({ dontCreateTextures: true }),
+        // so no bgfx framebuffer is built up-front; the externally-allocated color/depth textures are attached
+        // afterwards via setTexture/setDepthStencilTexture. Lazily build a framebuffer from those textures the
+        // first time the wrapper is bound. Several wrappers can reference the same underlying texture(s), so the
+        // framebuffer is cached on (and shared through) the first color texture's hardware wrapper to avoid each
+        // fresh framebuffer/view clearing the texture and clobbering earlier passes.
+        if (!nativeRTWrapper._framebuffers && !nativeRTWrapper._framebufferDepthStencil && !nativeRTWrapper._framebuffer) {
+            this._buildFrameGraphFramebuffer(nativeRTWrapper);
+        }
+
+        if (nativeRTWrapper._framebuffers) {
+            // _framebuffers is indexed by cube face for cube render targets, but by array layer for 2D-array
+            // render targets (cascaded shadow maps, the atmosphere aerial-perspective LUT). Callers pass the
+            // face in `faceIndex` and the array slice in `layer`, so pick whichever applies to this wrapper;
+            // indexing a layered target by `faceIndex` bound slice 0 for every layer and left slices 1..N-1
+            // unwritten.
+            const isCubeTarget = nativeRTWrapper.isCube;
+            const framebufferIndex = isCubeTarget ? (faceIndex ?? 0) : layer || faceIndex || 0;
+
+            // Cube render target: bind the framebuffer for the requested face. HDR prefiltering renders each
+            // roughness level into its own mip, so for lodLevel > 0 lazily build/cache a per-(face, mip)
+            // framebuffer; the pre-built _framebuffers array only targets mip 0.
+            if (lodLevel && isCubeTarget) {
+                this._bindUnboundFramebuffer(this._getCubeFaceMipFramebuffer(nativeRTWrapper, faceIndex ?? 0, lodLevel));
+            } else {
+                this._bindUnboundFramebuffer(nativeRTWrapper._framebuffers[Math.min(framebufferIndex, nativeRTWrapper._framebuffers.length - 1)]);
+            }
+        } else if (faceIndex) {
+            throw new Error("Cuboid frame buffers are not yet supported in NativeEngine.");
+        } else if (nativeRTWrapper._framebufferDepthStencil) {
+            this._bindUnboundFramebuffer(nativeRTWrapper._framebufferDepthStencil);
+        } else {
+            this._bindUnboundFramebuffer(nativeRTWrapper._framebuffer);
+        }
+
+        // Match ThinEngine/WebGPU: viewport is engine-global and must be reapplied after a framebuffer
+        // bind. Native stores viewport per FrameBuffer, so without this a prior setViewport (e.g. FG
+        // CopyTexture with a sub-rect) is lost when _applyRenderTarget binds the destination RT and
+        // the copy draws full-screen instead.
+        this._applyBoundViewport(forceFullscreenViewport);
+    }
+
+    // Re-apply the engine's cached viewport onto the newly bound framebuffer (WebGL/WebGPU behaviour).
+    // forceFullscreenViewport paints 0..1 without clobbering _cachedViewport, matching ThinEngine's
+    // use of _viewport() for the fullscreen path.
+    private _applyBoundViewport(forceFullscreenViewport?: boolean): void {
+        if (this._cachedViewport && !forceFullscreenViewport) {
+            this.setViewport(this._cachedViewport);
+            return;
+        }
+        if (forceFullscreenViewport) {
+            const cached = this._cachedViewport;
+            this.setViewport({ x: 0, y: 0, width: 1, height: 1 });
+            this._cachedViewport = cached;
+        }
+    }
 
     // Returns (building + caching on first use) the bgfx framebuffer that targets a single (mip, layer)
     // slice of a 3D render-target texture. Used by the IBL voxel grid + procedural mip chain, whose
@@ -4359,27 +4349,27 @@ export class ThinNativeEngine extends ThinEngine {
     public override unBindFramebuffer(texture: RenderTargetWrapper, disableGenerateMipMaps = false, onBeforeUnbind?: () => void): void {
         // NOTE: Disabling mipmap generation is not yet supported in NativeEngine.
 
-            // Full-frame viewport before unbind so bgfx MSAA resolve is not clipped to a
-            // prior sub-rect (e.g. FG CopyTexture viewport) — see _resetViewportForResolve.
-            this._resetViewportForResolve();
-            this._currentRenderTarget = null;
+        // Full-frame viewport before unbind so bgfx MSAA resolve is not clipped to a
+        // prior sub-rect (e.g. FG CopyTexture viewport) — see _resetViewportForResolve.
+        this._resetViewportForResolve();
+        this._currentRenderTarget = null;
 
-            if (onBeforeUnbind) {
-                onBeforeUnbind();
-            }
-
-            this._bindUnboundFramebuffer(null);
+        if (onBeforeUnbind) {
+            onBeforeUnbind();
         }
 
-        // bgfx may honour the active view rect when resolving an MSAA render target on unbind.
-        // WebGL's blitFramebuffer always resolves the full texture size; match that by forcing a
-        // 0..1 viewport for the resolve without permanently clobbering _cachedViewport (callers
-        // such as restoreDefaultFramebuffer re-apply the cache afterwards).
-        private _resetViewportForResolve(): void {
-            const cached = this._cachedViewport;
-            this.setViewport({ x: 0, y: 0, width: 1, height: 1 });
-            this._cachedViewport = cached;
-        }
+        this._bindUnboundFramebuffer(null);
+    }
+
+    // bgfx may honour the active view rect when resolving an MSAA render target on unbind.
+    // WebGL's blitFramebuffer always resolves the full texture size; match that by forcing a
+    // 0..1 viewport for the resolve without permanently clobbering _cachedViewport (callers
+    // such as restoreDefaultFramebuffer re-apply the cache afterwards).
+    private _resetViewportForResolve(): void {
+        const cached = this._cachedViewport;
+        this.setViewport({ x: 0, y: 0, width: 1, height: 1 });
+        this._cachedViewport = cached;
+    }
 
     public override createDynamicVertexBuffer(data: DataArray): DataBuffer {
         return this.createVertexBuffer(data, true);
@@ -4536,12 +4526,7 @@ export class ThinNativeEngine extends ThinEngine {
     /**
      * @internal
      */
-    public override _bindTextureDirectly(
-        _target: number,
-        _texture: Nullable<InternalTexture>,
-        _forTextureDataUpdate = false,
-        _force = false
-    ): boolean {
+    public override _bindTextureDirectly(_target: number, _texture: Nullable<InternalTexture>, _forTextureDataUpdate = false, _force = false): boolean {
         // Generic texture loaders use this WebGL-shaped method around direct uploads. Native upload commands
         // already receive the destination texture explicitly, so there is no bind operation to perform.
         return false;
@@ -4598,14 +4583,14 @@ export class ThinNativeEngine extends ThinEngine {
         const view = typeof data === "number" ? undefined : ArrayBuffer.isView(data) ? data : new Float32Array(data);
         const byteLength = typeof data === "number" ? data : view!.byteLength;
         const asVertexBuffer = (creationFlags & Constants.BUFFER_CREATIONFLAG_VERTEX) !== 0;
-                // WRITE bit set (WRITE or READWRITE) → UAV-capable. READ-only params bridges omit it
-                // so D3D11 keeps the buffer CPU-updatable (bgfx m_dynamic=true).
-                const computeWrite = (creationFlags & Constants.BUFFER_CREATIONFLAG_WRITE) !== 0;
+        // WRITE bit set (WRITE or READWRITE) → UAV-capable. READ-only params bridges omit it
+        // so D3D11 keeps the buffer CPU-updatable (bgfx m_dynamic=true).
+        const computeWrite = (creationFlags & Constants.BUFFER_CREATIONFLAG_WRITE) !== 0;
 
-                const buffer = new NativeDataBuffer();
-                buffer.references = 1;
-                buffer.capacity = byteLength;
-                buffer.nativeStorageBuffer = this._engine.createStorageBuffer(byteLength, asVertexBuffer, computeWrite);
+        const buffer = new NativeDataBuffer();
+        buffer.references = 1;
+        buffer.capacity = byteLength;
+        buffer.nativeStorageBuffer = this._engine.createStorageBuffer(byteLength, asVertexBuffer, computeWrite);
 
         if (view) {
             this._engine.updateStorageBuffer!(buffer.nativeStorageBuffer, view.buffer, view.byteOffset, view.byteLength, 0);
@@ -4623,32 +4608,32 @@ export class ThinNativeEngine extends ThinEngine {
      */
     public updateStorageBuffer(buffer: DataBuffer, data: DataArray, byteOffset?: number, byteLength?: number): void {
         const nb = buffer as NativeDataBuffer;
-            if (!nb.nativeStorageBuffer) {
+        if (!nb.nativeStorageBuffer) {
             return;
         }
 
         const view = ArrayBuffer.isView(data) ? data : new Float32Array(data);
         const srcLength = byteLength ?? view.byteLength;
-            const destOffset = byteOffset ?? 0;
+        const destOffset = byteOffset ?? 0;
 
-            // Prefer deferred command so small SSBO uploads (compute params) interleave with
-            // compute dispatches in the same scene.render scope. Large seed uploads stay
-            // immediate — the command stream's fixed buffer cannot hold multi-MB payloads.
-            if (_native.Engine.COMMAND_UPDATESTORAGEBUFFER && srcLength % 4 === 0 && srcLength <= 4096) {
-                const floats = new Float32Array(view.buffer, view.byteOffset, srcLength / 4);
-                this._commandBufferEncoder.startEncodingCommand(_native.Engine.COMMAND_UPDATESTORAGEBUFFER);
-                this._commandBufferEncoder.encodeCommandArgAsNativeData(nb.nativeStorageBuffer as unknown as NativeData);
-                this._commandBufferEncoder.encodeCommandArgAsUInt32(destOffset);
-                this._commandBufferEncoder.encodeCommandArgAsFloat32s(floats);
-                this._commandBufferEncoder.finishEncodingCommand();
-                return;
-            }
-
-            if (!this._engine.updateStorageBuffer) {
-                return;
-            }
-            this._engine.updateStorageBuffer(nb.nativeStorageBuffer, view.buffer, view.byteOffset, srcLength, destOffset);
+        // Prefer deferred command so small SSBO uploads (compute params) interleave with
+        // compute dispatches in the same scene.render scope. Large seed uploads stay
+        // immediate — the command stream's fixed buffer cannot hold multi-MB payloads.
+        if (_native.Engine.COMMAND_UPDATESTORAGEBUFFER && srcLength % 4 === 0 && srcLength <= 4096) {
+            const floats = new Float32Array(view.buffer, view.byteOffset, srcLength / 4);
+            this._commandBufferEncoder.startEncodingCommand(_native.Engine.COMMAND_UPDATESTORAGEBUFFER);
+            this._commandBufferEncoder.encodeCommandArgAsNativeData(nb.nativeStorageBuffer as unknown as NativeData);
+            this._commandBufferEncoder.encodeCommandArgAsUInt32(destOffset);
+            this._commandBufferEncoder.encodeCommandArgAsFloat32s(floats);
+            this._commandBufferEncoder.finishEncodingCommand();
+            return;
         }
+
+        if (!this._engine.updateStorageBuffer) {
+            return;
+        }
+        this._engine.updateStorageBuffer(nb.nativeStorageBuffer, view.buffer, view.byteOffset, srcLength, destOffset);
+    }
 
     /**
      * Reads bytes from a storage buffer (unsupported on native; returns zeros).
@@ -4656,10 +4641,11 @@ export class ThinNativeEngine extends ThinEngine {
      * @param _offset the byte offset to start reading from
      * @param size the number of bytes to read
      * @param buffer an optional destination buffer
+     * @param _noDelay unused compatibility flag on Native
      * @returns a promise resolving to the read data
      */
-    public readFromStorageBuffer(_storageBuffer: DataBuffer, _offset?: number, size?: number, buffer?: ArrayBufferView, _noDelay?: boolean): Promise<ArrayBufferView> {
-        return Promise.resolve(buffer ?? new Uint8Array(size ?? 0));
+    public async readFromStorageBuffer(_storageBuffer: DataBuffer, _offset?: number, size?: number, buffer?: ArrayBufferView, _noDelay?: boolean): Promise<ArrayBufferView> {
+        return buffer ?? new Uint8Array(size ?? 0);
     }
 
     /**
@@ -4788,22 +4774,22 @@ export class ThinNativeEngine extends ThinEngine {
 
             switch (binding.type) {
                 case ComputeBindingType.StorageBuffer:
-                                            case ComputeBindingType.DataBuffer: {
-                                                const dataBuffer = (binding.object.getBuffer ? binding.object.getBuffer() : binding.object) as NativeDataBuffer;
-                                                if (dataBuffer?.nativeStorageBuffer) {
-                                                    // Particle In/Out both ReadWrite (UAV). Cross-frame ping-pong stays UAV↔UAV.
-                                                    buffers.push({ stage, native: dataBuffer.nativeStorageBuffer, access: 2 /* ReadWrite */ });
-                                                }
-                                                break;
-                                            }
-                            case ComputeBindingType.UniformBuffer: {
-                                const native = this._getComputeUniformBridge(binding.object as UniformBuffer);
-                                if (native) {
-                                    // Params are readonly in the CS → SRV; Access::Read.
-                                    buffers.push({ stage, native, access: 0 /* Read */ });
-                                }
-                                break;
-                            }
+                case ComputeBindingType.DataBuffer: {
+                    const dataBuffer = (binding.object.getBuffer ? binding.object.getBuffer() : binding.object) as NativeDataBuffer;
+                    if (dataBuffer?.nativeStorageBuffer) {
+                        // Particle In/Out both ReadWrite (UAV). Cross-frame ping-pong stays UAV↔UAV.
+                        buffers.push({ stage, native: dataBuffer.nativeStorageBuffer, access: 2 /* ReadWrite */ });
+                    }
+                    break;
+                }
+                case ComputeBindingType.UniformBuffer: {
+                    const native = this._getComputeUniformBridge(binding.object as UniformBuffer);
+                    if (native) {
+                        // Params are readonly in the CS → SRV; Access::Read.
+                        buffers.push({ stage, native, access: 0 /* Read */ });
+                    }
+                    break;
+                }
                 case ComputeBindingType.Texture:
                 case ComputeBindingType.TextureWithoutSampler:
                 case ComputeBindingType.InternalTexture: {
@@ -4858,9 +4844,9 @@ export class ThinNativeEngine extends ThinEngine {
         }
 
         // Must go through the deferred update path so each prewarm dispatch sees its own params.
-                this.updateStorageBuffer(mirror, data, 0, byteLength);
-                return mirror.nativeStorageBuffer!;
-            }
+        this.updateStorageBuffer(mirror, data, 0, byteLength);
+        return mirror.nativeStorageBuffer!;
+    }
 
     public override releaseComputeEffects(): void {
         for (const name in this._compiledComputeEffects) {
