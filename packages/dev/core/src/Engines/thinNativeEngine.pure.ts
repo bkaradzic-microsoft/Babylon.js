@@ -2588,8 +2588,10 @@ export class ThinNativeEngine extends ThinEngine {
                     this.createTexture(EngineStore.FallbackTexture, noMipmap, texture.invertY, scene, samplingMode, null, onError, buffer, texture);
                 }
 
+                const errorMessage = (message || "Unknown error") + (EngineStore.UseFallbackTexture ? " - Fallback texture was used" : "");
+                texture._setError(errorMessage, exception);
                 if (onError) {
-                    onError((message || "Unknown error") + (EngineStore.UseFallbackTexture ? " - Fallback texture was used" : ""), exception);
+                    onError(errorMessage, exception);
                 }
             } else {
                 // fall back to the original url if the transformed url fails to load
