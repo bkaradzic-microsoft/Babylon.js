@@ -54,10 +54,12 @@ export interface INativeEngine {
         instanceDivisor: number
     ): void;
     updateDynamicVertexBuffer(vertexBuffer: NativeData, dataBuffer: ArrayBufferLike, dataByteOffset: number, dataByteLength: number, vertexByteOffset?: number): void;
+    readTransformFeedbackBuffer?(vertexBuffer: NativeData, dataBuffer: ArrayBufferLike, dataByteOffset: number, dataByteLength: number): void;
+
+    createProgram(vertexShader: string, fragmentShader: string, transformFeedbackVaryings?: string[]): NativeProgram;
+    createProgramAsync(vertexShader: string, fragmentShader: string, onSuccess: () => void, onError: (error: Error) => void, transformFeedbackVaryings?: string[]): NativeProgram;
     recordStorageBuffer?(vertexArray: NativeData, storageBuffer: NativeData, location: number, byteOffset: number, byteStride: number, numElements: number): void;
 
-    createProgram(vertexShader: string, fragmentShader: string): NativeProgram;
-    createProgramAsync(vertexShader: string, fragmentShader: string, onSuccess: () => void, onError: (error: Error) => void): NativeProgram;
     createComputeProgram?(computeShader: string): NativeProgram;
     createStorageBuffer?(byteLength: number, asVertexBuffer: boolean, computeWrite?: boolean): NativeData;
     updateStorageBuffer?(buffer: NativeData, dataBuffer: ArrayBufferLike, dataByteOffset: number, dataByteLength: number, destByteOffset: number): void;
@@ -445,6 +447,7 @@ interface INativeEngineConstructor {
     readonly COMMAND_DELETESTORAGEBUFFER?: NativeData;
     readonly COMMAND_UPDATESTORAGEBUFFER?: NativeData;
     readonly COMMAND_COMPUTEDISPATCH?: NativeData;
+    readonly COMMAND_DRAWTRANSFORMFEEDBACK?: NativeData;
 }
 
 /** @internal */
