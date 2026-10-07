@@ -4,8 +4,12 @@ import { ThinNativeEngine } from "core/Engines/thinNativeEngine.pure";
 describe("Native attachment clears", () => {
     afterEach(() => vi.unstubAllGlobals());
 
-    function createEngine() {
-        vi.stubGlobal("_native", { Engine: { COMMAND_CLEAR: new Uint32Array(1) } });
+    function createEngine(extended = true) {
+        const commands = {
+            COMMAND_CLEAR: new Uint32Array([1]),
+            COMMAND_CLEAR2: extended ? new Uint32Array([2]) : undefined,
+        };
+        vi.stubGlobal("_native", { Engine: commands });
         const uints = vi.fn();
         const floats = vi.fn();
         const encoder = {
@@ -16,7 +20,7 @@ describe("Native attachment clears", () => {
         };
         const engine: ThinNativeEngine = Object.create(ThinNativeEngine.prototype);
         Object.assign(engine, { _commandBufferEncoder: encoder });
-        return { engine, uints, floats };
+        return { engine, uints, floats, encoder, commands };
     }
 
     it.each([
@@ -28,12 +32,26 @@ describe("Native attachment clears", () => {
         { attachments: [2, -1, 0], mask: 5 },
         { attachments: [0, 1, 2, 3, 4, 5, 6, 7], mask: 255 },
     ])("encodes $attachments as mask $mask without losing depth/stencil clears", ({ attachments, mask }) => {
-        const { engine, uints, floats } = createEngine();
+        const { engine, uints, floats, encoder, commands } = createEngine();
         engine.bindAttachments(attachments);
         engine.clear({ r: 0.2, g: 0.3, b: 0.4, a: 1 }, true, true, true, 7);
         expect(uints.mock.calls.map(([value]) => value)).toEqual([mask ? 1 : 0, 1, 1, 7, mask]);
         expect(floats.mock.calls.map(([value]) => value)).toEqual([0.2, 0.3, 0.4, 1, 1]);
+        expect(encoder.startEncodingCommand).toHaveBeenCalledExactlyOnceWith(commands.COMMAND_CLEAR2);
     });
+
+    it.each([{ attachments: [] }, { attachments: [0] }, { attachments: [-1, 1] }])(
+        "keeps the legacy payload length when CLEAR2 is absent, attachments=$attachments",
+        ({ attachments }) => {
+            const { engine, uints, floats, encoder, commands } = createEngine(false);
+            engine.bindAttachments(attachments);
+            engine.clear({ r: 0.2, g: 0.3, b: 0.4, a: 1 }, true, true, true, 7);
+            expect(encoder.startEncodingCommand).toHaveBeenCalledExactlyOnceWith(commands.COMMAND_CLEAR);
+            expect(uints.mock.calls.map(([value]) => value)).toEqual([attachments.length ? 1 : 0, 1, 1, 7]);
+            expect(floats.mock.calls.map(([value]) => value)).toEqual([0.2, 0.3, 0.4, 1, 1]);
+            expect(encoder.finishEncodingCommand).toHaveBeenCalledOnce();
+        }
+    );
 
     it("preserves the all-disabled layout produced by buildTextureLayout", () => {
         const { engine, uints } = createEngine();

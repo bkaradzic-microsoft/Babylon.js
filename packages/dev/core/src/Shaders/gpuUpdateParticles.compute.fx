@@ -128,7 +128,8 @@ float directionRandomizer;
 #endif
 #endif
 } params;
-layout(std430, binding = 1) readonly buffer ParticlesInBuffer { Particle particles[]; } particlesIn;
+// Keep both ping-pong buffers as UAVs, matching the native dispatch bindings.
+layout(std430, binding = 1) buffer ParticlesInBuffer { Particle particles[]; } particlesIn;
 layout(std430, binding = 2) buffer ParticlesOutBuffer { Particle particles[]; } particlesOut;
 layout(binding = 3) uniform highp sampler2D randomTexture;
 layout(binding = 4) uniform highp sampler2D randomTexture2;

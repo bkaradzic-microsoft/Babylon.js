@@ -54,19 +54,12 @@ export interface INativeEngine {
         instanceDivisor: number
     ): void;
     updateDynamicVertexBuffer(vertexBuffer: NativeData, dataBuffer: ArrayBufferLike, dataByteOffset: number, dataByteLength: number, vertexByteOffset?: number): void;
-    recordStorageBuffer?(
-        vertexArray: NativeData,
-        storageBuffer: NativeData,
-        location: number,
-        byteOffset: number,
-        byteStride: number,
-        numElements: number
-    ): void;
+    recordStorageBuffer?(vertexArray: NativeData, storageBuffer: NativeData, location: number, byteOffset: number, byteStride: number, numElements: number): void;
 
     createProgram(vertexShader: string, fragmentShader: string): NativeProgram;
     createProgramAsync(vertexShader: string, fragmentShader: string, onSuccess: () => void, onError: (error: Error) => void): NativeProgram;
     createComputeProgram?(computeShader: string): NativeProgram;
-    createStorageBuffer?(byteLength: number, asVertexBuffer: boolean): NativeData;
+    createStorageBuffer?(byteLength: number, asVertexBuffer: boolean, computeWrite?: boolean): NativeData;
     updateStorageBuffer?(buffer: NativeData, dataBuffer: ArrayBufferLike, dataByteOffset: number, dataByteLength: number, destByteOffset: number): void;
     getUniforms(shaderProgram: NativeProgram, uniformsNames: string[]): WebGLUniformLocation[];
     getAttributes(shaderProgram: NativeProgram, attributeNames: string[]): number[];
@@ -86,16 +79,7 @@ export interface INativeEngine {
         is3D?: boolean
     ): void;
     loadTexture(texture: NativeTexture, data: ArrayBufferView, generateMips: boolean, invertY: boolean, srgb: boolean, onSuccess: () => void, onError: () => void): void;
-    loadRawTexture(
-        texture: NativeTexture,
-        data: ArrayBufferView,
-        width: number,
-        height: number,
-        format: number,
-        generateMips: boolean,
-        invertY: boolean,
-        srgb: boolean
-    ): void;
+    loadRawTexture(texture: NativeTexture, data: ArrayBufferView, width: number, height: number, format: number, generateMips: boolean, invertY: boolean, srgb: boolean): void;
     updateTextureData?(
         texture: NativeTexture,
         data: ArrayBufferView,
@@ -140,12 +124,12 @@ export interface INativeEngine {
     getTextureWidth(texture: NativeTexture): number;
     getTextureHeight(texture: NativeTexture): number;
     getTextureLayerCount?(texture: NativeTexture): number;
-        /**
-             * Sets hardware depth-compare sampling on a depth texture (PCF/PCSS shadow maps).
-             * comparisonFunction is a Babylon/GL compare enum (Constants.LESS etc.); 0 disables compare mode.
-             */
-            setTextureComparisonFunction?(texture: NativeTexture, comparisonFunction: number): void;
-            deleteTexture(texture: NativeTexture): void;
+    /**
+     * Sets hardware depth-compare sampling on a depth texture (PCF/PCSS shadow maps).
+     * comparisonFunction is a Babylon/GL compare enum (Constants.LESS etc.); 0 disables compare mode.
+     */
+    setTextureComparisonFunction?(texture: NativeTexture, comparisonFunction: number): void;
+    deleteTexture(texture: NativeTexture): void;
     readTexture(
         texture: NativeTexture,
         mipLevel: number,
@@ -158,6 +142,9 @@ export interface INativeEngine {
         bufferLength: number,
         faceIndex: number
     ): Promise<ArrayBuffer>;
+
+    /** Optional float-preserving readback; readTexture retains its RGBA8 contract. */
+    readTexture2?: INativeEngine["readTexture"];
 
     createImageBitmap(data: ArrayBuffer | IImage): ImageBitmap;
     resizeImageBitmap(image: ImageBitmap, bufferWidth: number, bufferHeight: number): Uint8Array;
@@ -361,14 +348,14 @@ interface INativeEngineConstructor {
     readonly ALPHA_SCREENMODE: number;
     readonly ALPHA_REPLACE_COLOR?: number;
 
-        readonly ALPHA_EQUATION_ADD?: number;
-        readonly ALPHA_EQUATION_SUBTRACT?: number;
-        readonly ALPHA_EQUATION_REVERSE_SUBTRACT?: number;
-        readonly ALPHA_EQUATION_MAX?: number;
-        readonly ALPHA_EQUATION_MIN?: number;
-        readonly ALPHA_EQUATION_DARKEN?: number;
+    readonly ALPHA_EQUATION_ADD?: number;
+    readonly ALPHA_EQUATION_SUBTRACT?: number;
+    readonly ALPHA_EQUATION_REVERSE_SUBTRACT?: number;
+    readonly ALPHA_EQUATION_MAX?: number;
+    readonly ALPHA_EQUATION_MIN?: number;
+    readonly ALPHA_EQUATION_DARKEN?: number;
 
-        readonly STENCIL_TEST_LESS: number;
+    readonly STENCIL_TEST_LESS: number;
     readonly STENCIL_TEST_LEQUAL: number;
     readonly STENCIL_TEST_EQUAL: number;
     readonly STENCIL_TEST_GEQUAL: number;
@@ -436,8 +423,8 @@ interface INativeEngineConstructor {
     readonly COMMAND_SETDEPTHWRITE: NativeData;
     readonly COMMAND_SETCOLORWRITE: NativeData;
     readonly COMMAND_SETBLENDMODE: NativeData;
-        readonly COMMAND_SETBLENDEQUATION?: NativeData;
-        readonly COMMAND_SETFLOAT: NativeData;
+    readonly COMMAND_SETBLENDEQUATION?: NativeData;
+    readonly COMMAND_SETFLOAT: NativeData;
     readonly COMMAND_SETFLOAT2: NativeData;
     readonly COMMAND_SETFLOAT3: NativeData;
     readonly COMMAND_SETFLOAT4: NativeData;
@@ -449,11 +436,14 @@ interface INativeEngineConstructor {
     readonly COMMAND_DRAW: NativeData;
     readonly COMMAND_DRAWINSTANCED: NativeData;
     readonly COMMAND_CLEAR: NativeData;
+    readonly COMMAND_CLEAR2?: NativeData;
     readonly COMMAND_SETSTENCIL: NativeData;
+    readonly COMMAND_SETSTENCIL2?: NativeData;
     readonly COMMAND_SETVIEWPORT: NativeData;
     readonly COMMAND_SETSCISSOR: NativeData;
     readonly COMMAND_COPYTEXTURE: NativeData;
     readonly COMMAND_DELETESTORAGEBUFFER?: NativeData;
+    readonly COMMAND_UPDATESTORAGEBUFFER?: NativeData;
     readonly COMMAND_COMPUTEDISPATCH?: NativeData;
 }
 
@@ -576,11 +566,5 @@ export interface INative {
     };
 
     // NativeMeshopt plugin — synchronous native replacement for the WASM meshopt decoder.
-    decodeMeshopt?(
-        source: Uint8Array,
-        count: number,
-        stride: number,
-        mode: "ATTRIBUTES" | "TRIANGLES" | "INDICES",
-        filter?: string
-    ): Uint8Array;
+    decodeMeshopt?(source: Uint8Array, count: number, stride: number, mode: "ATTRIBUTES" | "TRIANGLES" | "INDICES", filter?: string): Uint8Array;
 }

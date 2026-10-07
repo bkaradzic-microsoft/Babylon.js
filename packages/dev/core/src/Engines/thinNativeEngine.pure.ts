@@ -355,7 +355,7 @@ function _DownsampleRgbaTextureData(data: ArrayBufferView, width: number, height
 /** @internal */
 export class ThinNativeEngine extends ThinEngine {
     // This must match the protocol version in NativeEngine.cpp
-    private static readonly PROTOCOL_VERSION = 10;
+    private static readonly PROTOCOL_VERSION = 9;
 
     /** @internal */
     public static _createNativeDataStream(): NativeDataStream {
@@ -849,7 +849,8 @@ export class ThinNativeEngine extends ThinEngine {
             this.setDepthFunction(Constants.GEQUAL);
         }
 
-        this._commandBufferEncoder.startEncodingCommand(_native.Engine.COMMAND_CLEAR);
+        const clear2 = _native.Engine.COMMAND_CLEAR2;
+        this._commandBufferEncoder.startEncodingCommand(clear2 ?? _native.Engine.COMMAND_CLEAR);
         this._commandBufferEncoder.encodeCommandArgAsUInt32(backBuffer && color && this._clearAttachmentMask !== 0 ? 1 : 0);
         this._commandBufferEncoder.encodeCommandArgAsFloat32(color ? color.r : 0);
         this._commandBufferEncoder.encodeCommandArgAsFloat32(color ? color.g : 0);
@@ -863,7 +864,9 @@ export class ThinNativeEngine extends ThinEngine {
         this._commandBufferEncoder.encodeCommandArgAsFloat32(depth && this.useReverseDepthBuffer ? 0 : 1);
         this._commandBufferEncoder.encodeCommandArgAsUInt32(stencil ? 1 : 0);
         this._commandBufferEncoder.encodeCommandArgAsUInt32(stencilClearValue);
-        this._commandBufferEncoder.encodeCommandArgAsUInt32(this._clearAttachmentMask);
+        if (clear2) {
+            this._commandBufferEncoder.encodeCommandArgAsUInt32(this._clearAttachmentMask);
+        }
         this._commandBufferEncoder.finishEncodingCommand();
     }
 
@@ -1574,7 +1577,8 @@ export class ThinNativeEngine extends ThinEngine {
     }
 
     private _setStencil(mask: number, stencilOpFail: number, depthOpFail: number, depthOpPass: number, func: number, ref: number, funcMask: number = 0xff) {
-        this._commandBufferEncoder.startEncodingCommand(_native.Engine.COMMAND_SETSTENCIL);
+        const setStencil2 = _native.Engine.COMMAND_SETSTENCIL2;
+        this._commandBufferEncoder.startEncodingCommand(setStencil2 ?? _native.Engine.COMMAND_SETSTENCIL);
         this._commandBufferEncoder.encodeCommandArgAsUInt32(mask);
         this._commandBufferEncoder.encodeCommandArgAsUInt32(stencilOpFail);
         this._commandBufferEncoder.encodeCommandArgAsUInt32(depthOpFail);
@@ -1585,7 +1589,9 @@ export class ThinNativeEngine extends ThinEngine {
         // HighlightLayer, which compares only the glowing-mesh reference bits while ignoring
         // lower reserved bits. Without this, Native always used 0xFF and the outer/inner glow
         // stencil tests matched the wrong fragments.
-        this._commandBufferEncoder.encodeCommandArgAsUInt32(funcMask & 0xff);
+        if (setStencil2) {
+            this._commandBufferEncoder.encodeCommandArgAsUInt32(funcMask & 0xff);
+        }
         this._commandBufferEncoder.finishEncodingCommand();
     }
 
@@ -5076,8 +5082,9 @@ export class ThinNativeEngine extends ThinEngine {
         }
 
         return (
-            this._engine
-                .readTexture(
+            (this._engine.readTexture2 ?? this._engine.readTexture)
+                .call(
+                    this._engine,
                     texture._hardwareTexture?.underlyingResource,
                     level ?? 0,
                     x ?? 0,
@@ -5092,9 +5099,7 @@ export class ThinNativeEngine extends ThinEngine {
                 // eslint-disable-next-line github/no-then
                 .then((rawBuffer) => {
                     if (!buffer) {
-                        // readTexture normalizes the result to four channels, matching gl.readPixels(..., gl.RGBA, ...):
-                        // RGBA8 for integer source formats and RGBA32F for float ones. Pick the matching view so that
-                        // float render targets are handed back as a Float32Array exactly like on WebGL.
+                        // Legacy readTexture returns RGBA8; readTexture2 preserves float sources as RGBA32F.
                         buffer = rawBuffer.byteLength === 16 * width * height ? new Float32Array(rawBuffer) : new Uint8Array(rawBuffer);
                     }
 
