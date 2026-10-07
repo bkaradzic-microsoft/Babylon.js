@@ -1571,6 +1571,7 @@ export class GaussianSplattingMeshBase extends Mesh {
                         cameraViewInfos.sortAppliedId = cameraViewInfos.sortRequestId;
                         this._canPostToWorker = true;
                         this._readyToDisplay = true;
+                        this._sortIsDirty = false;
                     }
                 }
             });
@@ -2968,6 +2969,9 @@ export class GaussianSplattingMeshBase extends Mesh {
                 this._worker.postMessage({ command: GaussianSplattingSortWorkerCommand.POSITIONS, positions, vertexCount }, [positions.buffer]);
                 // Re-sync the active interval set in case the source splat count changed.
                 this._postIntervalsToWorker();
+            } else {
+                // No sort-worker reply will flush the delayed upload (Native / no-worker path).
+                this._commitDelayedTextureUpdate();
             }
 
             // Handle SH textures in update path - create if they don't exist. Skip when the SH atlas is
