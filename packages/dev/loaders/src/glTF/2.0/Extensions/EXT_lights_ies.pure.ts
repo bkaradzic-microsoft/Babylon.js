@@ -69,10 +69,11 @@ export class EXT_lights_ies implements IGLTFLoaderExtension {
 
             let babylonSpotLight: SpotLight;
             let light: IEXTLightsIES_Light;
+            let name: string;
 
             const transformNode = await this._loader.loadNodeAsync(context, node, (babylonMesh) => {
                 light = ArrayItem.Get(extensionContext, this._lights, extension.light);
-                const name = light.name || babylonMesh.name;
+                name = light.name || babylonMesh.name;
 
                 babylonSpotLight = this._loader.babylonScene._executeWithBlockedEntityCollection(
                     !!this._loader._assetContainer,
