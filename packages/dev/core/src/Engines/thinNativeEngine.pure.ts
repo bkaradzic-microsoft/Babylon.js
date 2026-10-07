@@ -2009,11 +2009,12 @@ export class ThinNativeEngine extends ThinEngine {
             const context = canvas.getContext();
             // flush need to happen before getCanvasTexture: flush will create the render target synchronously (if it's not been created before)
             context.flush();
-            const source = canvas.getCanvasTexture();
+            const source = canvas.getCanvasTexture(premulAlpha, texture.generateMipMaps);
             this._commandBufferEncoder.startEncodingCommand(_native.Engine.COMMAND_COPYTEXTURE);
             this._commandBufferEncoder.encodeCommandArgAsNativeData(source as NativeData);
             this._commandBufferEncoder.encodeCommandArgAsNativeData(destination as NativeData);
             this._commandBufferEncoder.finishEncodingCommand();
+            texture._premulAlpha = premulAlpha;
             texture.isReady = true;
         }
     }
@@ -2023,7 +2024,8 @@ export class ThinNativeEngine extends ThinEngine {
         // Keep at least 1x1 because many bgfx methods assume a non-zero texture size.
         width = Math.max(Math.floor(width), 1);
         height = Math.max(Math.floor(height), 1);
-        return this.createRawTexture(new Uint8Array(width * height * 4), width, height, Constants.TEXTUREFORMAT_RGBA, false, false, samplingMode);
+        generateMipMaps = generateMipMaps && "supportsDynamicTextureMipMaps" in this._engine && this._engine.supportsDynamicTextureMipMaps === true;
+        return this.createRawTexture(new Uint8Array(width * height * 4), width, height, Constants.TEXTUREFORMAT_RGBA, generateMipMaps, false, samplingMode);
     }
 
     public override createVideoElement(constraints: MediaTrackConstraints): any {
@@ -4433,9 +4435,29 @@ export class ThinNativeEngine extends ThinEngine {
     }
 
     public override getFontOffset(font: string): { ascent: number; height: number; descent: number } {
-        // TODO
-        const result = { ascent: 0, height: 0, descent: 0 };
-        return result;
+        // Match the browser's font line box for GUI layout, not just the ink in "Hg".
+        // Older Canvas runtimes may expose only glyph bounds.
+        try {
+            const canvas = this.createCanvas(64, 64);
+            const context = canvas.getContext("2d");
+            context.font = font;
+            const metrics: Partial<TextMetrics> = context.measureText("Hg");
+            const ascent = Number(metrics.fontBoundingBoxAscent ?? metrics.actualBoundingBoxAscent);
+            const descent = Number(metrics.fontBoundingBoxDescent ?? metrics.actualBoundingBoxDescent);
+            if (isFinite(ascent) && isFinite(descent) && ascent + descent > 0) {
+                return { ascent, height: ascent + descent, descent };
+            }
+        } catch (error) {
+            Logger.Warn(`Native font measurement failed; using an estimated line height: ${String(error)}`, 1);
+        }
+
+        // No canvas or an unmeasurable font: approximate from the CSS px size the same way the
+        // shared GetFallbackFontOffset does, so text still gets a sane non-zero line height.
+        const match = /(?:^|\s)([0-9]+(?:\.[0-9]+)?)px(?:\/|\s|$)/.exec(String(font || ""));
+        const size = Math.max(1, match ? parseFloat(match[1]) : 12);
+        const ascent = size * 0.8;
+        const descent = size * 0.2;
+        return { ascent, height: ascent + descent, descent };
     }
 
     /**

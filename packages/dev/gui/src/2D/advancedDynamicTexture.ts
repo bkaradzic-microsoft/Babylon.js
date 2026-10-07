@@ -24,6 +24,7 @@ import { type IPointerEvent, type IWheelEvent } from "core/Events/deviceInputEve
 import { RandomGUID } from "core/Misc/guid";
 import { GetClass } from "core/Misc/typeStore";
 import { DecodeBase64ToBinary } from "core/Misc/stringTools";
+import { IsWindowObjectExist } from "core/Misc/domManagement";
 
 import { type StandardMaterial } from "core/Materials/standardMaterial";
 import { type AbstractEngine } from "core/Engines/abstractEngine";
@@ -1170,20 +1171,44 @@ export class AdvancedDynamicTexture extends DynamicTexture {
         evt.preventDefault();
     };
     /**
+     * Resolves the global object clipboard events are registered on. `self` is only defined in
+     * browsers and workers, so DOM-less hosts such as Babylon Native would otherwise throw a
+     * ReferenceError as soon as an InputText takes focus.
+     * @returns the event target, or null when the host has no global event target
+     */
+    private static _GetClipboardEventTarget(): Nullable<EventTarget> {
+        if (typeof self !== "undefined") {
+            return self;
+        }
+        if (IsWindowObjectExist()) {
+            return window;
+        }
+        return null;
+    }
+
+    /**
      * Register the clipboard Events onto the canvas
      */
     public registerClipboardEvents(): void {
-        self.addEventListener("copy", this._onClipboardCopy, false);
-        self.addEventListener("cut", this._onClipboardCut, false);
-        self.addEventListener("paste", this._onClipboardPaste, false);
+        const target = AdvancedDynamicTexture._GetClipboardEventTarget();
+        if (!target) {
+            return;
+        }
+        target.addEventListener("copy", this._onClipboardCopy, false);
+        target.addEventListener("cut", this._onClipboardCut, false);
+        target.addEventListener("paste", this._onClipboardPaste, false);
     }
     /**
      * Unregister the clipboard Events from the canvas
      */
     public unRegisterClipboardEvents(): void {
-        self.removeEventListener("copy", this._onClipboardCopy);
-        self.removeEventListener("cut", this._onClipboardCut);
-        self.removeEventListener("paste", this._onClipboardPaste);
+        const target = AdvancedDynamicTexture._GetClipboardEventTarget();
+        if (!target) {
+            return;
+        }
+        target.removeEventListener("copy", this._onClipboardCopy);
+        target.removeEventListener("cut", this._onClipboardCut);
+        target.removeEventListener("paste", this._onClipboardPaste);
     }
 
     /**
