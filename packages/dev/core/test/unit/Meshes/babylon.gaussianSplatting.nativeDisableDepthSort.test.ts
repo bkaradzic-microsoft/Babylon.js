@@ -108,4 +108,22 @@ describe("GaussianSplatting - Native sorting with disableDepthSort", () => {
         scene.dispose();
         engine.dispose();
     });
+
+    it("settles the depth sort after synchronous native sorting", async () => {
+        const { GaussianSplattingMesh } = await import("core/Meshes/GaussianSplatting/gaussianSplattingMesh");
+        const { engine, scene } = await createScene();
+
+        const mesh = new GaussianSplattingMesh("gs", null, scene);
+        mesh.updateData(createSplatData(4));
+
+        sortSplats.mockClear();
+        mesh.position.x = 1;
+        mesh._postToWorker(true);
+
+        expect(sortSplats).toHaveBeenCalledOnce();
+        expect(mesh._isDepthSortSettled).toBe(true);
+
+        scene.dispose();
+        engine.dispose();
+    });
 });
