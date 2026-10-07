@@ -168,6 +168,94 @@ let WorkerPromise: Nullable<Promise<Worker>> = null;
 let LocalWorker: Nullable<Worker> = null;
 let ActionId = 0;
 const IgnoreSupportedFormats = false;
+
+/**
+ * True when we should run the Basis transcoder on the JS thread instead of a
+ * Worker. Babylon Native has no real Worker threads, and its sync XHR path
+ * (required by worker importScripts) returns empty bodies — so the browser
+ * blob-worker handshake cannot load basis_transcoder.js there.
+ * @returns True if Basis should transcode on the main thread
+ */
+const ShouldUseMainThreadBasis = (): boolean => {
+    // Native embedder global. Also fall back when Worker/Blob/URL are missing.
+    if (typeof (globalThis as any)._native !== "undefined") {
+        return true;
+    }
+    if (typeof Worker === "undefined" || typeof URL !== "function" || typeof Blob === "undefined") {
+        return true;
+    }
+    return false;
+};
+
+/**
+ * Loads basis_transcoder.js without importScripts and returns its BASIS module factory.
+ * @returns The BASIS factory
+ */
+const LoadBasisFactoryAsync = async (): Promise<unknown> => {
+    // LoadFileAsync works on Native; sync XHR / importScripts does not.
+    const jsSource = (await Tools.LoadFileAsync(Tools.GetBabylonScriptURL(BasisToolsOptions.JSModuleURL), false)) as string;
+    // eslint-disable-next-line no-new-func
+    const basisFactory = new Function(`${jsSource}\nreturn typeof BASIS !== "undefined" ? BASIS : undefined;`)();
+    if (typeof basisFactory !== "function") {
+        throw new Error("Basis transcoder JS loaded but the BASIS factory is missing");
+    }
+    return basisFactory;
+};
+
+/**
+ * Creates a Worker-shaped object that runs {@link workerFunction} on the calling thread.
+ * The worker body is re-evaluated with its WorkerGlobalScope names (`onmessage`, `postMessage`,
+ * `importScripts` and `BASIS`) bound to locals, so the transcode logic is shared with the Worker path.
+ * @param basisFactory The BASIS module factory from basis_transcoder.js
+ * @returns A Worker-compatible object
+ */
+const CreateMainThreadBasisWorker = (basisFactory: unknown): Worker => {
+    type Listener = (event: MessageEvent) => void;
+    const listeners: Listener[] = [];
+    const defer = (callback: () => void) => (typeof setTimeout === "function" ? setTimeout(callback, 0) : callback());
+    const dispatch = (data: unknown) => {
+        const event = { data } as MessageEvent;
+        for (const listener of listeners.slice()) {
+            listener(event);
+        }
+    };
+
+    // eslint-disable-next-line no-new-func, @typescript-eslint/restrict-template-expressions
+    const createWorkerScope = new Function("BASIS", "postMessage", "importScripts", `let onmessage;\n(${workerFunction})();\nreturn onmessage;`);
+    const onMessage: Listener = createWorkerScope(
+        basisFactory,
+        (data: unknown) => defer(() => dispatch(data)),
+        () => {}
+    );
+
+    const worker = {
+        postMessage: (data: any) => {
+            defer(() => {
+                try {
+                    onMessage({ data } as MessageEvent);
+                } catch (error) {
+                    dispatch(data?.action === "transcode" ? { action: "transcode", success: false, id: data.id } : { action: "error", error });
+                }
+            });
+        },
+        addEventListener: (type: string, listener: Listener) => {
+            if (type === "message") {
+                listeners.push(listener);
+            }
+        },
+        removeEventListener: (type: string, listener: Listener) => {
+            const index = type === "message" ? listeners.indexOf(listener) : -1;
+            if (index >= 0) {
+                listeners.splice(index, 1);
+            }
+        },
+        terminate: () => {
+            listeners.length = 0;
+        },
+    };
+
+    return worker as unknown as Worker;
+};
 const CreateWorkerAsync = async () => {
     if (!WorkerPromise) {
         WorkerPromise = new Promise((res, reject) => {
@@ -176,10 +264,17 @@ const CreateWorkerAsync = async () => {
             } else {
                 Tools.LoadFileAsync(Tools.GetBabylonScriptURL(BasisToolsOptions.WasmModuleURL))
                     // eslint-disable-next-line github/no-then
-                    .then((wasmBinary) => {
+                    .then(async (wasmBinary) => {
+                        if (ShouldUseMainThreadBasis()) {
+                            LocalWorker = CreateMainThreadBasisWorker(await LoadBasisFactoryAsync());
+                            // eslint-disable-next-line github/no-then
+                            initializeWebWorker(LocalWorker, wasmBinary).then(res, reject);
+                            return;
+                        }
                         if (typeof URL !== "function") {
                             // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
-                            return reject("Basis transcoder requires an environment with a URL constructor");
+                            reject("Basis transcoder requires an environment with a URL constructor");
+                            return;
                         }
                         // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
                         const workerBlobUrl = URL.createObjectURL(new Blob([`(${workerFunction})()`], { type: "application/javascript" }));
