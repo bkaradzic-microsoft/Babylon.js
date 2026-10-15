@@ -583,7 +583,9 @@ export class ThinNativeEngine extends ThinEngine {
             // environment per-roughness. Required so OpenPBR/PBR IBL scenes get real prefiltered radiance
             // (and irradiance) instead of black/energy-lossy CPU-SH fallbacks.
             allowTexturePrefiltering: true,
-            needToInvertCubeMapRendering: _native.Engine.CAPS_ORIGIN_BOTTOM_LEFT === false,
+            // Babylon Native renders cube faces in GL row order on every backend (BabylonNative#1926),
+            // so cube render targets must not be inverted again here.
+            needToInvertCubeMapRendering: false,
             // Explicit CDF texel bins preserve nearest-sampling ties across Native's texture-origin
             // transform, enabling GPU irradiance filtering and its dominant-light direction.
             allowIrradianceTexturePrefiltering: true,
