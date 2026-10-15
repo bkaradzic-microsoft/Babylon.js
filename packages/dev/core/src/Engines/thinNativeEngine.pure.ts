@@ -557,7 +557,8 @@ export class ThinNativeEngine extends ThinEngine {
             maxMSAASamples: 16,
             canUseGLInstanceID: true,
             canUseGLVertexID: true,
-            supportComputeShaders: true,
+            // Compute is optional on Native; only claim it when the host exposes the compute API.
+            supportComputeShaders: typeof this._engine.createComputeProgram === "function",
             supportSRGBBuffers: true,
             supportTransformFeedbacks: !!_native.Engine.COMMAND_DRAWTRANSFORMFEEDBACK,
             textureMaxLevel: false,
