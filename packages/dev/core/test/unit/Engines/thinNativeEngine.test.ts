@@ -1,6 +1,8 @@
 import { ThinNativeEngine } from "core/Engines/thinNativeEngine";
 import { type NativeRenderTargetWrapper } from "core/Engines/Native/nativeRenderTargetWrapper";
 import { NullEngine } from "core/Engines/nullEngine";
+import { NativeShaderProcessingContext } from "core/Engines/Native/nativeShaderProcessingContext";
+import { ShaderLanguage } from "core/Materials/shaderLanguage";
 import { RegisterNativeEngineCubeTexture } from "core/Engines/Native/Extensions/nativeEngine.cubeTexture.pure";
 import { CubeTexture } from "core/Materials/Textures/cubeTexture";
 import "core/Materials/Textures/baseTexture.polynomial";
@@ -49,6 +51,18 @@ type TestCommandScopeEngine = {
 };
 
 describe("ThinNativeEngine", () => {
+    describe("graphics shader language", () => {
+        it("rejects WGSL before shader processing begins", () => {
+            const engine = Object.create(ThinNativeEngine.prototype) as ThinNativeEngine;
+            expect(() => engine._getShaderProcessingContext(ShaderLanguage.WGSL)).toThrow("NativeEngine does not support WGSL graphics shaders.");
+        });
+
+        it("keeps GLSL shader processing supported", () => {
+            const engine = Object.create(ThinNativeEngine.prototype) as ThinNativeEngine;
+            expect(engine._getShaderProcessingContext(ShaderLanguage.GLSL)).toBeInstanceOf(NativeShaderProcessingContext);
+        });
+    });
+
     describe("dynamic textures", () => {
         it("coerces fractional canvas dimensions before allocating native texture data", () => {
             const thinNativeEngine = Object.create(ThinNativeEngine.prototype) as ThinNativeEngine;
